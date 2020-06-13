@@ -40,8 +40,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         public int LightmapScale;
         public int SmoothingGroups;
 
-        // HACK:
-        public bool HasDisplacement = false;
+        /// <summary>
+        /// The displacement applied to this side or null if no displacement is used.
+        /// </summary>
+        public VmfSolidSideDisplacement Displacement;
 
         /// <summary>
         /// Returns a <see cref="System.String"/> that represents this instance.
