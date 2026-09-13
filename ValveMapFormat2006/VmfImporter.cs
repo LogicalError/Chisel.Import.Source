@@ -59,6 +59,21 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                 //bool inPolygon = false; T3dPolygon polygon = null;
                 string[] closures = new string[64];
                 int depth = 0;
+
+                // Hammer wraps anything hidden in the editor in a `hidden { ... }` block. That is a
+                // wrapper, not a nesting level: treating it as one shifts every closures[] test
+                // below down by one, nothing matches, and the contents are silently dropped - which
+                // is what used to happen to 38 entities in background02.vmf alone.
+                // So braces are tracked separately from closure levels: a `hidden` brace is counted
+                // (so the matching `}` balances) but pushes no closure, leaving its contents to
+                // parse exactly as if they had been written in place.
+                // They are still flagged, because hidden objects do NOT survive compilation - vbsp's
+                // chunk parser has no handler for `hidden` either, so it skips the whole block.
+                // Verified against the shipped background02.bsp: every class that appears in the
+                // compiled entity lump appears exactly as many times as the VMF has *shown* ones.
+                bool[] closureIsHidden = new bool[64];
+                int braceDepth = 0;
+                int hiddenNesting = 0;
                 string line;
                 string previousLine = "";
                 bool justEnteredClosure = false;
@@ -74,8 +89,31 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     if (line.Length == 0) continue;
 
                     // parse closures and keep track of them.
-                    if (line[0] == '{') { closures[depth] = previousLine; depth++; justEnteredClosure = true; continue; }
-                    if (line[0] == '}') { depth--; closures[depth] = null; continue; }
+                    if (line[0] == '{')
+                    {
+                        var isHiddenWrapper = (previousLine == "hidden");
+                        closureIsHidden[braceDepth] = isHiddenWrapper;
+                        braceDepth++;
+                        if (isHiddenWrapper) hiddenNesting++;
+                        else { closures[depth] = previousLine; depth++; }
+                        // Only a real closure starts a new object. A `hidden` wrapper stays at the
+                        // level it was written in, so the line after it belongs to the closure we
+                        // were ALREADY in - flagging it would make that line look like the first
+                        // line of a fresh object at that level. An entity's own hidden solids
+                        // (`entity { ... hidden { solid { ... } } }`) hit exactly that: the `solid`
+                        // line was read as the start of a new entity, adding a classname-less
+                        // phantom to the world and re-pointing `entity` at it, so the hidden solids
+                        // were attached to the phantom instead of the entity that owns them.
+                        justEnteredClosure = !isHiddenWrapper;
+                        continue;
+                    }
+                    if (line[0] == '}')
+                    {
+                        braceDepth--;
+                        if (closureIsHidden[braceDepth]) hiddenNesting--;
+                        else { depth--; closures[depth] = null; }
+                        continue;
+                    }
 
                     // parse version info.
                     if (closures[0] == "versioninfo")
@@ -133,7 +171,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                         // create a new solid and add it to the world.
                         if (justEnteredClosure)
                         {
-                            solid = new VmfSolid();
+                            solid = new VmfSolid { IsHidden = hiddenNesting > 0 };
                             world.Solids.Add(solid);
                         }
 
@@ -243,7 +281,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                         // create a new entity and add it to the world.
                         if (justEnteredClosure)
                         {
-                            entity = new VmfEntity();
+                            entity = new VmfEntity { IsHidden = hiddenNesting > 0 };
                             world.Entities.Add(entity);
                         }
 
@@ -259,13 +297,20 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                         }
                     }
 
+                    // parse entity connections.
+                    if (closures[0] == "entity" && closures[1] == "connections" && closures[2] == null)
+                    {
+                        if (TryParsekeyValue(line, out key, out value) && value is string connection)
+                            entity.Connections.Add(new VmfConnection(key, connection));
+                    }
+
                     // parse entity solid.
                     if (closures[0] == "entity" && closures[1] == "solid" && closures[2] == null)
                     {
                         // create a new solid and add it to the entity.
                         if (justEnteredClosure)
                         {
-                            solid = new VmfSolid();
+                            solid = new VmfSolid { IsHidden = hiddenNesting > 0 };
                             entity.Solids.Add(solid);
                         }
 

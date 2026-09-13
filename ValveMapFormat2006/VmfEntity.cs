@@ -35,9 +35,16 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         public int Id = -1;
 
         /// <summary>
-        /// The class name of the entity.
+        /// True when this was inside a Hammer `hidden` block. Those are hidden in the editor AND
+        /// skipped by the map compiler, so they are imported but left inactive.
         /// </summary>
-        public string ClassName;
+        public bool IsHidden;
+
+        /// <summary>
+        /// The class name of the entity. Empty, never null, for an entity block that declares no
+        /// `classname` - the converters switch and string-compare on this on every entity.
+        /// </summary>
+        public string ClassName = "";
 
         /// <summary>
         /// The solids in the entity if available.
@@ -48,6 +55,12 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         /// The properties in the entity whenever parsable.
         /// </summary>
         public Dictionary<string, object> Properties = new Dictionary<string, object>();
+
+        /// <summary>
+        /// The entity's I/O connections, in the order the map lists them. An output is written once for
+        /// every connection it drives, so these cannot live in <see cref="Properties"/>.
+        /// </summary>
+        public List<VmfConnection> Connections = new List<VmfConnection>();
 
         /// <summary>
         /// Tries the get a property of a certain type.

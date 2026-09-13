@@ -54,6 +54,50 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			return SourceEngineUnits.Swizzle(inputV);
 		}
 
+		// EditorUtility.DisplayProgressBar forces an editor repaint, so calling it once per solid
+		// costs considerably more than the work it is reporting on. A few updates a second is
+		// indistinguishable to look at.
+		const double kProgressIntervalSeconds = 0.1;
+		static readonly System.Diagnostics.Stopwatch s_ProgressTimer = System.Diagnostics.Stopwatch.StartNew();
+		static double s_NextProgressUpdate;
+
+		internal static void ReportProgress(string title, string message, int index, int total)
+		{
+#if UNITY_EDITOR
+			var now = s_ProgressTimer.Elapsed.TotalSeconds;
+			if (index > 0 && index < total - 1 && now < s_NextProgressUpdate)
+				return;
+			s_NextProgressUpdate = now + kProgressIntervalSeconds;
+			UnityEditor.EditorUtility.DisplayProgressBar(title, $"{message} ({index + 1} / {total})...", (total <= 0) ? 0f : index / (float)total);
+#endif
+		}
+
+		// Reading material.mainTexture forces the texture asset to load, and the same handful of
+		// materials is shared across tens of thousands of sides. The size cannot change during an
+		// import, so resolve it once per material.
+		const int kDefaultTextureSize = 256;
+		static readonly int kMainTexPropertyID = Shader.PropertyToID("_MainTex");
+		static readonly Dictionary<Material, Vector2Int> s_TextureSizes = new();
+
+		static void GetTextureSize(Material material, out int width, out int height)
+		{
+			if (material == null)
+			{
+				width = height = kDefaultTextureSize;
+				return;
+			}
+			if (!s_TextureSizes.TryGetValue(material, out var size))
+			{
+				size = new Vector2Int(kDefaultTextureSize, kDefaultTextureSize);
+				if (material.HasProperty(kMainTexPropertyID) &&
+					material.mainTexture != null)
+					size = new Vector2Int(material.mainTexture.width, material.mainTexture.height);
+				s_TextureSizes[material] = size;
+			}
+			width = size.x;
+			height = size.y;
+		}
+
 		static decimal Sqrt(decimal x, decimal epsilon = 0.000000000000000001M)
 		{
 			var current = (decimal)math.sqrt((double)x);
@@ -142,11 +186,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             HashSet<string> materialSearcherWarnings = new HashSet<string>();
 			List<DisplacementSide> DisplacementSurfaces = new List<DisplacementSide>();
 
+			s_TextureSizes.Clear();
+			var importStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
 			// iterate through all world solids.
 			for (int i = 0; i < world.Solids.Count; i++)
             {
 #if UNITY_EDITOR
-                UnityEditor.EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map (1/3)", "Converting Hammer Solids To Chisel Brushes (" + (i + 1) + " / " + world.Solids.Count + ")...", i / (float)world.Solids.Count);
+                ReportProgress("Chisel: Importing Source Engine Map (1/3)", "Converting Hammer Solids To Chisel Brushes", i, world.Solids.Count);
 #endif
 				try
 				{
@@ -161,6 +208,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					if (solid.Sides.Count > 0 && IsInvisibleMaterial(solid.Sides[0].Material))
 						continue;
 					// HACK: Fix me in the future!
+
 
 
 
@@ -192,6 +240,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					center = Swizzle(center) * SourceEngineUnits.VmfInvMeters;
 
 					bool enabled = true;
+
 					// compute all the sides of the brush that will be clipped.
 					for (int j = solid.Sides.Count; j-- > 0;)
 					{
@@ -206,20 +255,24 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 						Material material = null;
 
-						if (IsSkyboxMaterial(side.Material))
+						var isSkybox = IsSkyboxMaterial(side.Material);
+						var isInvisible = !isSkybox && IsInvisibleMaterial(side.Material);
+						var isExcluded = !isSkybox && !isInvisible && IsExcludedMaterial(side.Material);
+
+						if (isSkybox)
 						{
 							material = RenderSettings.skybox;
 						} else
 						// detect collision-only polygons.
-						if (IsInvisibleMaterial(side.Material))
+						if (isInvisible)
 						{
-							material = ChiselDefaultMaterials.CollisionOnlyMaterial;
+							material = ChiselDefaultMaterials.Defaults.collisionSurfacesMaterial;
 							//surface.DestinationFlags &= ~SurfaceDestinationFlags.RenderReceiveCastShadows;
 						} else
 						// detect excluded polygons.
-						if (IsExcludedMaterial(side.Material))
+						if (isExcluded)
 						{
-							material = ChiselDefaultMaterials.ShadowOnlyMaterial;
+							material = ChiselDefaultMaterials.Defaults.shadowOnlySurfacesMaterial;
 							//surface.DestinationFlags &= SurfaceDestinationFlags.CastShadows;
 							//surface.DestinationFlags |= SurfaceDestinationFlags.Collidable;
 						} else
@@ -231,9 +284,13 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						// fallback to default material.
 						if (material == null)
 						{
+							// Unity resolves a full stack trace for every one of these, so the
+							// call count here matters as much as the time: if it is in the
+							// hundreds, the warning itself is the cost and wants de-duplicating
+							// per missing material name.
 							//if (!side.Material.StartsWith("TOOLS"))
 								Debug.LogWarning($"Could not find the Material {side.Material}");
-							material = ChiselDefaultMaterials.DefaultFloorMaterial;
+							material = ChiselDefaultMaterials.Defaults.defaultFloorMaterial;
 						}
 
 						// create chisel surface for the clip.
@@ -266,6 +323,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 					// build a very large cube brush.
 					ChiselBrushComponent go = ChiselComponentFactory.Create<ChiselBrushComponent>($"Solid {solid.Id}", model);
+
+					// Hidden in Hammer means the map compiler skips it too (vbsp has no handler for
+					// the `hidden` block either), so it is imported but left inactive.
+					if (solid.IsHidden) go.gameObject.SetActive(false);
+
 					// TODO: should output all sides that are not displaced, but visible
 					if (!enabled) go.enabled = false;
 					go.surfaceArray = new ChiselSurfaceArray();
@@ -277,30 +339,22 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					if (brushMesh.polygons == null ||
 						brushMesh.polygons.Length == 0)
 						continue;
+
 					go.definition.BrushOutline = brushMesh;
+
 					var surfaceDefinitions = go.surfaceArray;
 					for (int j = 0; j < brushMesh.polygons.Length; j++)
 					{
 						surfaceDefinitions.surfaces[j] = planeSurfaces[brushMesh.polygons[j].descriptionIndex];
 				}
 
-				int mainTex = Shader.PropertyToID("_MainTex");
 					for (int j = solid.Sides.Count; j-- > 0;)
 					{
 						VmfSolidSide side = solid.Sides[j];
 						var surface = planeSurfaces[j];
-						var material = surface.RenderMaterial;
 
 						// calculate the texture coordinates.
-						int w = 256;
-						int h = 256;
-						if (material != null &&
-							material.HasProperty(mainTex) &&
-							material.mainTexture != null)
-						{
-							w = material.mainTexture.width;
-							h = material.mainTexture.height;
-						}
+						GetTextureSize(surface.RenderMaterial, out int w, out int h);
 
 						var clip = new Plane(planes[j].xyz, planes[j].w);
 						CalculateTextureCoordinates(go, unfixedOrigin, surface, clip, w, h, side.UAxis, side.VAxis);
@@ -333,7 +387,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 							// build displacement:
 							BuildDisplacementSurface(go, displacement.side, displacement.surface, vertices, plane);
-							surfaceDefinitions.surfaces[displacement.descriptionIndex] = ChiselSurface.Create(ChiselDefaultMaterials.ShadowOnlyMaterial);
+							surfaceDefinitions.surfaces[displacement.descriptionIndex] = ChiselSurface.Create(ChiselDefaultMaterials.Defaults.shadowOnlySurfacesMaterial);
 
 							break;
 						}
@@ -346,6 +400,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 					// finalize the brush by snapping planes and centering the pivot point.
 					go.transform.position += brushMesh.CenterAndSnapPlanes(ref surfaceDefinitions);
+
                 foreach (Transform child in go.transform)
                     child.position -= go.transform.position;
 
@@ -357,11 +412,13 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				}
 			}
 
+			var solidsLoopSeconds = importStopwatch.Elapsed.TotalSeconds;
+
             // iterate through all entities.
             for (int e = 0; e < world.Entities.Count; e++)
             {
 #if UNITY_EDITOR
-                UnityEditor.EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map (2/3)", "Converting Hammer Entities To Chisel Brushes (" + (e + 1) + " / " + world.Entities.Count + ")...", e / (float)world.Entities.Count);
+                ReportProgress("Chisel: Importing Source Engine Map (2/3)", "Converting Hammer Entities To Chisel Brushes", e, world.Entities.Count);
 #endif
 				try
 				{ 
@@ -448,13 +505,13 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 							// detect collision-only polygons.
 							if (IsInvisibleMaterial(side.Material))
 							{
-								material = ChiselDefaultMaterials.CollisionOnlyMaterial;
+								material = ChiselDefaultMaterials.Defaults.collisionSurfacesMaterial;
 								//surface.DestinationFlags &= ~SurfaceDestinationFlags.RenderReceiveCastShadows;
 							} else
 							// detect excluded polygons.
 							if (IsExcludedMaterial(side.Material))
 							{
-								material = ChiselDefaultMaterials.ShadowOnlyMaterial;
+								material = ChiselDefaultMaterials.Defaults.shadowOnlySurfacesMaterial;
 								//surface.DestinationFlags &= SurfaceDestinationFlags.CastShadows;
 								//surface.DestinationFlags |= SurfaceDestinationFlags.Collidable;
 							} else
@@ -468,7 +525,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 							{
 								//if (!side.Material.StartsWith("TOOLS"))
 									Debug.LogWarning($"Could not find the Material {side.Material}");
-								material = ChiselDefaultMaterials.DefaultFloorMaterial;
+								material = ChiselDefaultMaterials.Defaults.defaultFloorMaterial;
 							}
 
 							// create chisel surface for the clip.
@@ -487,6 +544,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						}
 
 						ChiselBrushComponent go = ChiselComponentFactory.Create<ChiselBrushComponent>($"Solid {solid.Id}", model);
+
+						// Hidden in Hammer means the map compiler skips it too (vbsp has no handler for
+						// the `hidden` block either), so it is imported but left inactive.
+						if (solid.IsHidden) go.gameObject.SetActive(false);
 						go.surfaceArray = new ChiselSurfaceArray();
 						go.surfaceArray.EnsureSize(planes.Length);
 
@@ -501,23 +562,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 							surfaceDefinitions.surfaces[j] = planeSurfaces[brushMesh.polygons[j].descriptionIndex];
 					}
 
-					int mainTex = Shader.PropertyToID("_MainTex");
 					for (int j = solid.Sides.Count; j-- > 0;)
                     {
                         VmfSolidSide side = solid.Sides[j];
 						var surface = planeSurfaces[j];
-						var material = surface.RenderMaterial;
 
                         // calculate the texture coordinates.
-                        int w = 256;
-                        int h = 256;
-						if (material != null &&
-						    material.HasProperty(mainTex) &&
-					        material.mainTexture != null)
-                        {
-                            w = material.mainTexture.width;
-                            h = material.mainTexture.height;
-                        }
+                        GetTextureSize(surface.RenderMaterial, out int w, out int h);
+
 						var clip = new Plane(planes[j].xyz, planes[j].w);
                         CalculateTextureCoordinates(go, center, surface, clip, w, h, side.UAxis, side.VAxis);
                     }
@@ -538,6 +590,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					Debug.LogException(ex);
 				}
 			}
+
+			var totalSeconds = importStopwatch.Elapsed.TotalSeconds;
+			Debug.Log($"Source map import (world brushes): {totalSeconds:0.0}s total" +
+					  ((world.Solids.Count > 0) ? $" ({solidsLoopSeconds * 1000.0 / world.Solids.Count:0.0} ms/solid)" : "") +
+					  $" - {world.Solids.Count} solids, {world.Entities.Count} entity brushes, {s_TextureSizes.Count} materials");
         }
 
         private static void CalculateTextureCoordinates(ChiselBrushComponent pr, Vector3 unfixedOrigin, ChiselSurface surface, Plane clip, int textureWidth, int textureHeight, VmfAxis UAxis, VmfAxis VAxis)

@@ -34,6 +34,12 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         public int Id = -1;
 
         /// <summary>
+        /// True when this was inside a Hammer `hidden` block. Those are hidden in the editor AND
+        /// skipped by the map compiler, so they are imported but left inactive.
+        /// </summary>
+        public bool IsHidden;
+
+        /// <summary>
         /// The sides of the solid.
         /// </summary>
         public List<VmfSolidSide> Sides = new List<VmfSolidSide>();

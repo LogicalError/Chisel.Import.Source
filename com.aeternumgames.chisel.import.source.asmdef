@@ -5,9 +5,12 @@
         "com.chisel.core",
         "Unity.Mathematics",
         "com.chisel.unity.components",
-        "com.chisel.import.source.vpktools"
+        "com.chisel.import.source.vpktools",
+        "Unity.Postprocessing.Runtime"
     ],
-    "includePlatforms": [],
+    "includePlatforms": [
+        "Editor"
+    ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,
@@ -19,6 +22,11 @@
             "name": "com.aeternumgames.chisel.decals",
             "expression": "0.0.0",
             "define": "COM_AETERNUMGAMES_CHISEL_DECALS"
+        },
+        {
+            "name": "com.unity.postprocessing",
+            "expression": "3.0.0",
+            "define": "COM_UNITY_POSTPROCESSING"
         }
     ],
     "noEngineReferences": false
