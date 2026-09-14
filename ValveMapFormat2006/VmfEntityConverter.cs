@@ -60,6 +60,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             // per-entity loop below and get a pass of their own.
             ImportRopes(gameResources, parent, world);
 
+            // Built on the first decal that needs it, since only overlays name brush faces.
+            VmfDecalConverter.SideIndex decalSides = null;
+
             // iterate through all entities.
             for (int e = 0; e < world.Entities.Count; e++)
             {
@@ -74,6 +77,19 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     case "move_rope":
                     case "keyframe_rope":
                         break;
+
+                    // Decals are imported as data only: nothing draws them yet (see VmfDecal). With the
+                    // optional decals package installed, infodecal keeps its own case further down.
+#if !COM_AETERNUMGAMES_CHISEL_DECALS
+                    case "infodecal":
+#endif
+                    case "info_overlay":
+                    case "info_projecteddecal":
+                    {
+                        decalSides ??= new VmfDecalConverter.SideIndex(world);
+                        VmfDecalConverter.Import(parent, entity, decalSides);
+                        break;
+                    }
 
                     // https://developer.valvesoftware.com/wiki/Light
                     // light is a point entity available in all Source games. it creates an invisible, static light source that shines in all directions.

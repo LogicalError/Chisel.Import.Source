@@ -6,7 +6,8 @@
         "Unity.Mathematics",
         "com.chisel.unity.components",
         "com.chisel.import.source.vpktools",
-        "Unity.Postprocessing.Runtime"
+        "Unity.Postprocessing.Runtime",
+        "com.aeternumgames.chisel.import.source.runtime"
     ],
     "includePlatforms": [
         "Editor"

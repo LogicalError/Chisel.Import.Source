@@ -52,9 +52,12 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         public List<VmfSolid> Solids = new List<VmfSolid>();
 
         /// <summary>
-        /// The properties in the entity whenever parsable.
+        /// The properties in the entity whenever parsable. Keys match regardless of case, as they do in
+        /// Source: vbsp's ValueForKey and the game's KeyValue both compare them case-insensitively, and
+        /// Hammer does not always write a key in the same case ("BasisOrigin" and "basisorigin" both
+        /// occur). A key written twice keeps its last value, as in vbsp.
         /// </summary>
-        public Dictionary<string, object> Properties = new Dictionary<string, object>();
+        public Dictionary<string, object> Properties = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// The entity's I/O connections, in the order the map lists them. An output is written once for
