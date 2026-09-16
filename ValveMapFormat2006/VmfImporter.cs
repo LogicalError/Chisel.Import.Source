@@ -255,6 +255,16 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                         }
                     }
 
+                    // parse world solid side displacement alphas.
+                    if (closures[0] == "world" && closures[1] == "solid" && closures[2] == "side" && closures[3] == "dispinfo" && closures[4] == "alphas" && closures[5] == null)
+                    {
+                        // parse displacement float rows.
+                        if (TryParseFloatRow(line, out key, out List<float> alphas))
+                        {
+                            displacement.Alphas.Add(alphas);
+                        }
+                    }
+
                     // parse world solid side displacement offsets.
                     if (closures[0] == "world" && closures[1] == "solid" && closures[2] == "side" && closures[3] == "dispinfo" && closures[4] == "offsets" && closures[5] == null)
                     {

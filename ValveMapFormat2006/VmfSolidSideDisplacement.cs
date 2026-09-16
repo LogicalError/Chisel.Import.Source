@@ -40,6 +40,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         public List<List<float>> Distances = new List<List<float>>();
         public List<List<VmfVector3>> Offsets = new List<List<VmfVector3>>();
         public List<List<VmfVector3>> OffsetNormals = new List<List<VmfVector3>>();
+        /// <summary>
+        /// Hammer's painted alpha, 0..255 per vertex, rows like <see cref="Distances"/>: the weight a blending
+        /// material (LightmappedGeneric with $basetexture2) mixes its second layer in by.
+        /// </summary>
+        public List<List<float>> Alphas = new List<List<float>>();
 
         /// <summary>
         /// Returns a <see cref="System.String"/> that represents this instance.

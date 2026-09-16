@@ -277,8 +277,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 							//surface.DestinationFlags |= SurfaceDestinationFlags.Collidable;
 						} else
 						{
-							// find the material in the unity project automatically.
-							material = gameResources.ImportVMT(side.Material);
+							// find the material in the unity project automatically. Only a displacement
+							// blends a second layer; any other face gets the material as vbsp patches it.
+							material = gameResources.ImportVMT(side.Material, brushFace: side.Displacement == null);
 						}
 
 						// fallback to default material.
@@ -516,8 +517,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 								//surface.DestinationFlags |= SurfaceDestinationFlags.Collidable;
 							} else
 							{ 
-								// find the material in the unity project automatically.
-								material = gameResources.ImportVMT(side.Material);
+								// find the material in the unity project automatically. Displacements only
+								// exist on world brushes, so every face here gets the material as vbsp
+								// patches it for a plain brush face.
+								material = gameResources.ImportVMT(side.Material, brushFace: true);
 							}
 							
 							// fallback to default material.
@@ -726,6 +729,18 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             return false;
         }
 
+		/// <summary>
+		/// A displacement vertex's colour: white, with Hammer's painted alpha (0..255) as its alpha - the
+		/// weight a blending material mixes its second layer in by. A displacement nobody painted is 0
+		/// throughout, as it is in Source, which shows the first layer only.
+		/// </summary>
+		public static Color DisplacementVertexColor(VmfSolidSideDisplacement displacement, int row, int column)
+		{
+			var alphas = displacement.Alphas;
+			var alpha = (row < alphas.Count && column < alphas[row].Count) ? alphas[row][column] : 0.0f;
+			return new Color(1, 1, 1, Mathf.Clamp01(alpha / 255.0f));
+		}
+
 		private static void BuildDisplacementSurface(ChiselBrushComponent go, VmfSolidSide side, ChiselSurface surface, List<Vector3> vertices, Plane plane)
         {
             // create a new game object for the displacement.
@@ -783,6 +798,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 			var meshVertices = new Vector3[power * power];
 			var meshUVs = new Vector2[power * power];
+			var meshColors = new Color[power * power];
 
 			var faceNormal = -plane.normal;
 			for (int v = 0, x = 0; x < power ; x++)
@@ -804,6 +820,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					var distance = distances[z];
 					meshVertices[v] = vertex + ((result + (normal * distance)) * SourceEngineUnits.VmfInvMeters) + (offset * SourceEngineUnits.VmfInvMeters);
 					meshUVs[v] = uvmatrix.MultiplyPoint(vertex);
+					meshColors[v] = DisplacementVertexColor(side.Displacement, x, z);
 				}
 			}
 
@@ -830,6 +847,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 			mesh.SetVertices(meshVertices);
             mesh.SetUVs(0, meshUVs);
+            mesh.SetColors(meshColors);
             mesh.SetTriangles(meshTriangles, 0);
 
             // center the mesh.
