@@ -323,7 +323,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 
 					// build a very large cube brush.
-					ChiselBrushComponent go = ChiselComponentFactory.Create<ChiselBrushComponent>($"Solid {solid.Id}", model);
+					// What the brush is made of, as vbsp decides it: a brush with any glass, grate, slime or water side is
+					// that, and it is named after it
+					var (contents, contentsName) = VmfBrushContents.Of(solid, gameResources);
+					ChiselBrushComponent go = ChiselComponentFactory.Create<ChiselBrushComponent>($"{contentsName} {solid.Id}", model);
+					go.Contents = contents;
 
 					// Hidden in Hammer means the map compiler skips it too (vbsp has no handler for
 					// the `hidden` block either), so it is imported but left inactive.
@@ -546,7 +550,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 							planeSurfaces[j] = surface;
 						}
 
-						ChiselBrushComponent go = ChiselComponentFactory.Create<ChiselBrushComponent>($"Solid {solid.Id}", model);
+						// What the brush is made of, as vbsp decides it: a brush with any glass, grate, slime or water side is
+						// that, and it is named after it
+						var (contents, contentsName) = VmfBrushContents.Of(solid, gameResources);
+						ChiselBrushComponent go = ChiselComponentFactory.Create<ChiselBrushComponent>($"{contentsName} {solid.Id}", model);
+						go.Contents = contents;
 
 						// Hidden in Hammer means the map compiler skips it too (vbsp has no handler for
 						// the `hidden` block either), so it is imported but left inactive.
