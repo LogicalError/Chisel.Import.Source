@@ -101,7 +101,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			decal.targetName = GetText(entity, "targetname");
 			decal.material   = material;
 			decal.origin     = GetVector(entity, "origin");
-			decal.spawnFlags = GetInteger(entity, "spawnflags");
+			decal.spawnFlags = entity.GetInteger("spawnflags");
 
 			var position = decal.origin;
 			var rotation = Quaternion.identity;
@@ -110,7 +110,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				case VmfDecal.DecalType.InfoDecal:
 				{
 					// The engine is given only the point, so there is no direction to import.
-					decal.lowPriority = GetInteger(entity, "LowPriority") != 0;
+					decal.lowPriority = entity.GetInteger("LowPriority") != 0;
 					break;
 				}
 				case VmfDecal.DecalType.InfoProjectedDecal:
@@ -134,7 +134,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 					decal.textureU        = new Vector2(GetFloat(entity, "StartU"), GetFloat(entity, "EndU"));
 					decal.textureV        = new Vector2(GetFloat(entity, "StartV"), GetFloat(entity, "EndV"));
-					decal.renderOrder     = GetInteger(entity, "RenderOrder");
+					decal.renderOrder     = entity.GetInteger("RenderOrder");
 					decal.fadeMinDistance = GetFloat(entity, "fademindist");
 					decal.fadeMaxDistance = GetFloat(entity, "fademaxdist");
 
@@ -203,11 +203,6 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		static float GetFloat(VmfEntity entity, string key)
 		{
 			return entity.TryGetProperty(key, out float value) ? value : 0;
-		}
-
-		static int GetInteger(VmfEntity entity, string key)
-		{
-			return (int)GetFloat(entity, key);
 		}
 
 		static Vector3 GetVector(VmfEntity entity, string key)

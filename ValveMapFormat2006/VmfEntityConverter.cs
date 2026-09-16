@@ -55,6 +55,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             var entityStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
             ResetSpriteCaches();
+            VmfModelCollision.ResetCaches();
 
             // Ropes link entities together through NextKey, so they cannot be resolved by the
             // per-entity loop below and get a pass of their own.
@@ -447,6 +448,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                                                                                     new Vector3(angles.X, angles.Y, angles.Z),
 																					new Vector3(position.X, position.Y, position.Z), SourceEntity.Model);
 
+							// The model carries each collision set the game makes of it; the entity decides which it collides with.
+							ModelCollision.Use(go, VmfModelCollision.ChooseSet(gameResources, entity, model));
+
 							// Only the Hammer-only helpers are inactive. NPCs, items and weapons
 							// render in game and stay active - unless the mapper hid the entity, in
 							// which case the compiler drops it and it is not in the game either.
@@ -631,7 +635,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// </summary>
 		private static bool TryResolveClassModel(GameResources gameResources, string className, out string modelPath)
 		{
-			modelPath = gameResources.GetEntityClassModel(className);
+			modelPath = gameResources.EntityClasses.GetModel(className);
 			if (!string.IsNullOrEmpty(modelPath))
 				return true;
 

@@ -91,6 +91,50 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         }
 
         /// <summary>
+        /// Reads a property the way vbsp's IntForKey and the game's integer keyfields read one, with atoi: the whole
+        /// number the value starts with, and 0 when it starts with none or the key is missing.
+        /// </summary>
+        public int GetInteger(string name)
+        {
+            if (!Properties.TryGetValue(name, out var value))
+                return 0;
+
+            switch (value)
+            {
+                case int integer:
+                    return integer;
+                // The parser only types a value as a float or a vector when it is written in numbers, and atoi stops
+                // at the decimal point or the space.
+                case float number:
+                    return (int)number;
+                case VmfVector3 vector:
+                    return (int)vector.X;
+                case VmfVector4 vector:
+                    return (int)vector.X;
+                case string text:
+                    return ParseLeadingInteger(text);
+                default:
+                    return 0;
+            }
+        }
+
+        static int ParseLeadingInteger(string text)
+        {
+            var i = 0;
+            while (i < text.Length && char.IsWhiteSpace(text[i]))
+                i++;
+
+            var negative = i < text.Length && text[i] == '-';
+            if (i < text.Length && (text[i] == '-' || text[i] == '+'))
+                i++;
+
+            long value = 0;
+            for (; i < text.Length && text[i] >= '0' && text[i] <= '9'; i++)
+                value = Math.Min(value * 10 + (text[i] - '0'), (long)int.MaxValue + 1);
+            return (int)Math.Max(int.MinValue, Math.Min(int.MaxValue, negative ? -value : value));
+        }
+
+        /// <summary>
         /// Returns a <see cref="System.String"/> that represents this instance.
         /// </summary>
         /// <returns>A <see cref="System.String"/> that represents this instance.</returns>
