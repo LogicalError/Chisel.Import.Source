@@ -620,18 +620,19 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			}
 		}
 
-		// A world brush goes to the world model and is named after what it is made of, as vbsp decides it: a brush
-		// with any glass, grate, slime or water side is that ("Glass 247412"). Any other brush goes to the model for
-		// its role, named after the role ("Clip 1234", "Trigger 5678"), and keeps the default contents: it never
-		// meets the world's brushes.
+		// A world brush goes to the world model, and a brush of an entity vbsp compiles on its own to that entity's
+		// model. Both are named after what they are made of, as vbsp decides it: a brush with any glass, grate, slime or
+		// water side is that ("Glass 247412"). Any other brush goes to the model for its role, named after the role
+		// ("Clip 1234", "Trigger 5678"), and keeps the default contents: it never meets the world's brushes.
 		static ChiselBrushComponent CreateBrush(GameResources gameResources, VmfBrushModels brushModels, ChiselModelComponent world,
 												VmfEntity entity, VmfSolid solid, VmfBrushRole role, string roleName)
 		{
-			if (role != VmfBrushRole.World)
+			if (role != VmfBrushRole.World && role != VmfBrushRole.Entity)
 				return ChiselComponentFactory.Create<ChiselBrushComponent>($"{roleName} {solid.Id}", brushModels.ModelFor(role, roleName, entity, solid));
 
+			var model = (role == VmfBrushRole.World) ? world : brushModels.ModelFor(role, roleName, entity, solid);
 			var (contents, contentsName) = VmfBrushContents.Of(solid, gameResources);
-			var brush = ChiselComponentFactory.Create<ChiselBrushComponent>($"{contentsName} {solid.Id}", world);
+			var brush = ChiselComponentFactory.Create<ChiselBrushComponent>($"{contentsName} {solid.Id}", model);
 			brush.Contents = contents;
 			return brush;
 		}

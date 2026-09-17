@@ -10,6 +10,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
     {
         /// <summary>Drawn or solid: part of the world model, typed by its contents</summary>
         World,
+        /// <summary>
+        /// Drawn or solid in a brush entity that vbsp compiles as a model of its own (func_brush, func_door...): a model
+        /// per entity, typed by its contents, which never cuts the world
+        /// </summary>
+        Entity,
         /// <summary>A trigger volume: a convex trigger collider of its own, under its entity</summary>
         Trigger,
         /// <summary>Blocks movement without being drawn (clips, invisible brushes, ladders): colliders only</summary>
@@ -105,6 +110,13 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             "func_combine_ball_spawner",
         };
 
+        // Brush entities whose brushes vbsp moves into the world (LoadEntityCallback). Every other brush entity is compiled
+        // from its own brushes alone (ProcessSubModel), so it neither cuts the world nor is cut by it.
+        static readonly HashSet<string> kWorldClasses = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "func_detail", "func_ladder",
+        };
+
         const SourceSurfaceFlags kNotDrawn = SourceSurfaceFlags.NoDraw | SourceSurfaceFlags.Hint | SourceSurfaceFlags.Skip | SourceSurfaceFlags.Trigger;
 
         /// <summary>Whether the engine draws a face with this material. A sky face is drawn, as the sky.</summary>
@@ -117,9 +129,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         /// <remarks>
         /// The class of a brush entity decides first, the way the engine gives its brushes a purpose: trigger volumes,
         /// vis and effect helpers, func_clip_vphysics. Everything else goes by what vbsp makes of the sides: a brush with
-        /// a drawn face, or solid contents, is world geometry; otherwise clip contents make a clip, see-through contents
-        /// an invisible collider, nonsolid contents a light blocker, and whatever is left (hints, skips, block-LOS)
-        /// produces nothing.
+        /// a drawn face, or solid contents, is geometry - of the world, or of its entity's own model when vbsp compiles
+        /// the entity on its own; otherwise clip contents make a clip, see-through contents an invisible collider,
+        /// nonsolid contents a light blocker, and whatever is left (hints, skips, block-LOS) produces nothing.
         /// </remarks>
         public static (VmfBrushRole role, string name) RoleOf(string entityClassName, IReadOnlyList<string> sideMaterials, Func<string, VMTContents> contentsOf)
         {
@@ -150,13 +162,15 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     return (VmfBrushRole.Collider, "Physics Clip");
             }
 
+            var geometry = (string.IsNullOrEmpty(entityClassName) || kWorldClasses.Contains(entityClassName))
+                         ? VmfBrushRole.World : VmfBrushRole.Entity;
             if (anyDrawn)
-                return (VmfBrushRole.World, null);
+                return (geometry, null);
             // Trigger faces outside a trigger entity trigger nothing
             if (anyTrigger)
                 return (VmfBrushRole.Helper, "Trigger");
             if ((contents & SourceContents.Solid) != 0)
-                return (VmfBrushRole.World, null);
+                return (geometry, null);
 
             switch (contents & (SourceContents.PlayerClip | SourceContents.MonsterClip))
             {
@@ -177,6 +191,47 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             if ((contents & SourceContents.BlockLOS) != 0)
                 return (VmfBrushRole.Helper, "Block LOS");
             return (VmfBrushRole.Helper, "Hint");
+        }
+
+        // func_brush's "Solidity" (BrushSolidities_e)
+        const int kBrushSolidNever  = 1;
+        const int kBrushSolidAlways = 2;
+        // func_wall_toggle's spawnflag SF_WALL_START_OFF
+        const int kWallStartOff = 1;
+        // "rendermode" kRenderNone
+        const int kRenderNone = 10;
+
+        /// <summary>
+        /// Whether a brush entity's model is drawn, collides and is there at all when the map starts, as the game spawns
+        /// the entity (Source SDK 2013): func_illusionary is never solid (CFuncIllusionary::Spawn); func_brush is not
+        /// solid with "Solidity" Never, and "StartDisabled" hides it and makes it non-solid unless "Solidity" is Always
+        /// (CFuncBrush::Spawn, TurnOff); func_wall_toggle's spawnflag 1 hides it and makes it non-solid
+        /// (CFuncWallToggle::TurnOff); render mode 10 draws nothing. An entity hidden in Hammer isn't compiled at all.
+        /// </summary>
+        public static (bool render, bool collide, bool active) EntityState(VmfEntity entity)
+        {
+            var render  = entity.GetInteger("rendermode") != kRenderNone;
+            var collide = true;
+            var active  = !entity.IsHidden;
+            var className = entity.ClassName ?? string.Empty;
+            if (className.Equals("func_illusionary", StringComparison.OrdinalIgnoreCase))
+                collide = false;
+            else if (className.Equals("func_brush", StringComparison.OrdinalIgnoreCase))
+            {
+                var solidity = entity.GetInteger("Solidity");
+                collide = solidity != kBrushSolidNever;
+                if (entity.GetInteger("StartDisabled") != 0)
+                {
+                    if (solidity == kBrushSolidAlways)
+                        render = false;
+                    else
+                        active = false;
+                }
+            }
+            else if (className.Equals("func_wall_toggle", StringComparison.OrdinalIgnoreCase) &&
+                     (entity.GetInteger("spawnflags") & kWallStartOff) != 0)
+                active = false;
+            return (render, collide, active);
         }
 
         /// <summary>What a face with this material produces, on a brush with this role</summary>

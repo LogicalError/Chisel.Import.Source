@@ -13,6 +13,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
     /// (a trigger collider has to be convex, and a brush is);</item>
     /// <item>"Tool Brushes": light blockers, which only cast shadows, and everything else that makes nothing: hints,
     /// origins, and a model per vis or effect entity.</item>
+    /// <item>"Brush Entities": a model per brush entity that vbsp compiles on its own (func_brush, func_door...), which
+    /// draws and collides as the entity does when the map starts (<see cref="VmfBrushContents.EntityState"/>).</item>
     /// </list>
     /// Everything sits at the root's origin, as the world model does, so the brushes' map coordinates hold.
     /// </summary>
@@ -51,6 +53,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     return SharedModel(kClipsGroup, name, render: false, collide: true);
                 case VmfBrushRole.ShadowCaster:
                     return SharedModel(kToolsGroup, name, render: true, collide: false);
+                case VmfBrushRole.Entity:
+                {
+                    var state = VmfBrushContents.EntityState(entity);
+                    var model = SharedModel("Brush Entities", EntityName(entity), state.render, state.collide, !state.active);
+                    // func_physbox is a physics object, which a physics clip stops
+                    VmfCollisionLayers.PlaceOnMoverLayer(model.gameObject, null, entity.ClassName);
+                    return model;
+                }
                 default:
                     // A helper entity keeps its brushes together, under its own name
                     if (entity != null && name == entity.ClassName)
