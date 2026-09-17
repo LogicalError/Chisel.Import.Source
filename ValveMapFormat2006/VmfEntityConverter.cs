@@ -454,6 +454,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 							// The model carries each collision set the game makes of it; the entity decides which it collides with.
 							ModelCollision.Use(go, VmfModelCollision.ChooseSet(gameResources, entity, model));
+							// Clips only stop some movers, which are told apart by their layer
+							VmfCollisionLayers.PlaceOnMoverLayer(go, gameResources.EntityClasses, entity.ClassName);
 
 							// Only the Hammer-only helpers are inactive. NPCs, items and weapons
 							// render in game and stay active - unless the mapper hid the entity, in

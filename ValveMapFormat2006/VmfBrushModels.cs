@@ -22,12 +22,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         const string kTriggersGroup = "Triggers";
         const string kToolsGroup    = "Tool Brushes";
 
-        // Unity layers for the clips that only block one kind of mover, when the project has them
-        static readonly Dictionary<string, string> kClipLayers = new()
-        {
-            ["Player Clip"] = "PlayerClip",
-            ["NPC Clip"]    = "NpcClip",
-        };
+        // Unity layers for the clips, which only block some movers (VmfCollisionLayers), when the project has them
+        static readonly IReadOnlyDictionary<string, string> kClipLayers = VmfCollisionLayers.ClipLayersByModelName;
 
         readonly Transform root;
         readonly Dictionary<string, Transform> groups = new();

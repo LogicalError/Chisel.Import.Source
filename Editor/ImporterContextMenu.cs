@@ -76,6 +76,11 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     var importer = new ValveMapFormat2006.VmfImporter();
                     var map = importer.Import(path);
 
+                    // Clip models only stop the movers they stop in the game, by layer
+                    var layerChanges = ValveMapFormat2006.VmfCollisionLayers.Ensure();
+                    if (layerChanges != null)
+                        Debug.Log("Source map import (collision layers): " + layerChanges);
+
                     // create parent game object to store all of the imported content.
                     go = new GameObject("Source Map - " + Path.GetFileNameWithoutExtension(path));
                     go.SetActive(false);
