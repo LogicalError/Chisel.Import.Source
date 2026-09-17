@@ -66,6 +66,8 @@ namespace AeternumGames.Chisel.Import.Source.Editor
 			}
 
 	    	GameObject go = null;
+            ValveMapFormat2006.SourceReflectionProbes reflectionProbes = null;
+            var mapName = string.IsNullOrEmpty(path) ? null : Path.GetFileNameWithoutExtension(path);
             try
             {
                 if (!string.IsNullOrEmpty(path))
@@ -128,6 +130,8 @@ namespace AeternumGames.Chisel.Import.Source.Editor
 #endif
                     // begin converting hammer entities to unity objects.
                     ValveMapFormat2006.VmfEntityConverter.Import(gameResources, go.transform, map);
+                    // A reflection probe at every env_cubemap; they are baked once the level they reflect is built (below)
+                    reflectionProbes = ValveMapFormat2006.VmfReflectionProbes.Import(go.transform, map, mapName);
 #if COM_UNITY_POSTPROCESSING
                     // and give the map the auto exposure, bloom and color correction it has in game.
                     ValveMapFormat2006.VmfPostProcessingConverter.Import(gameResources, go.transform, map, Path.GetFileNameWithoutExtension(path));
@@ -163,6 +167,14 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     ChiselNodeHierarchyManager.Rebuild();
                     Debug.Log($"Source map import (activate): {activateSeconds:0.0}s, " +
                               $"(initial CSG rebuild): {activateStopwatch.Elapsed.TotalSeconds:0.0}s");
+
+                    if (reflectionProbes != null)
+                    {
+                        EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Baking reflection probes...", 0.97f);
+                        activateStopwatch.Restart();
+                        ValveMapFormat2006.VmfReflectionProbes.Bake(reflectionProbes, mapName);
+                        Debug.Log($"Source map import (reflection probes): {activateStopwatch.Elapsed.TotalSeconds:0.0}s");
+                    }
                 }
                 EditorUtility.ClearProgressBar();
             }
