@@ -57,8 +57,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             ResetSpriteCaches();
             VmfModelCollision.ResetCaches();
 
-            // Ropes link entities together through NextKey, so they cannot be resolved by the
-            // per-entity loop below and get a pass of their own.
+            // A rope ends at the entity its NextKey names, which the per-entity loop below can't resolve, so ropes get a
+            // pass of their own.
             ImportRopes(gameResources, parent, world);
 
             // Built on the first decal that needs it, since only overlays name brush faces.
@@ -74,7 +74,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
                 switch (entity.ClassName)
                 {
-                    // Handled by ImportRopes above, as whole chains rather than single entities.
+                    // Handled by ImportRopes above, which has to look up the entities they end at.
                     case "move_rope":
                     case "keyframe_rope":
                         break;
@@ -650,133 +650,93 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		}
 
 		/// <summary>
-		/// Ropes, cables and hanging wires.
+		/// Ropes, cables and hanging wires: one for every rope entity that draws one, built as the game builds it (see
+		/// <see cref="VmfRope"/>). The entities name each other through NextKey, which the per-entity loop can't resolve,
+		/// so they get a pass of their own.
 		/// <para>
-		/// Source builds each one from a chain of point entities: a <c>move_rope</c> starts the
-		/// chain and every node names the next one through <c>NextKey</c>, matched against the
-		/// next node's <c>targetname</c>. Nothing about that is visible to the per-entity loop,
-		/// which is why ropes have to be resolved in a pass of their own.
-		/// </para>
-		/// <para>
-		/// Source renders a rope as a camera-facing textured quad strip - which is precisely what
-		/// a LineRenderer is - so that is what we emit, rather than building a tube mesh that
-		/// would be heavier and less faithful.
+		/// The game draws a rope as a strip that turns to face the camera, which is what a LineRenderer is. The texture
+		/// runs along the rope in V there, a fixed step per drawn point. A LineRenderer lays it out along the line in U
+		/// instead, one repeat per segment in RepeatPerSegment mode, times textureScale - so the step goes into
+		/// textureScale, and the Cable shader samples the two coordinates the other way around.
 		/// </para>
 		/// </summary>
 		private static void ImportRopes(GameResources gameResources, Transform parent, VmfWorld world)
 		{
-			const float kDefaultSlack  = 25f;   // Hammer's defaults
-			const float kDefaultWidth  = 2f;
-			const float kDefaultSubdiv = 2f;
-
-			var nodesByName = new Dictionary<string, VmfEntity>(System.StringComparer.OrdinalIgnoreCase);
-			var chainStarts = new List<VmfEntity>();
-
-			foreach (var entity in world.Entities)
-			{
-				if (entity.ClassName != "move_rope" && entity.ClassName != "keyframe_rope")
-					continue;
-				if (entity.TryGetProperty("targetname", out string targetName) && !string.IsNullOrEmpty(targetName))
-					nodesByName[targetName] = entity;
-				if (entity.ClassName == "move_rope")
-					chainStarts.Add(entity);
-			}
-
-			if (chainStarts.Count == 0)
+			var links = VmfRope.Links(world.Entities);
+			if (links.Count == 0)
 				return;
 
+			var textureHeights = new Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
 			int created = 0;
-			foreach (var start in chainStarts)
+			foreach (var link in links)
 			{
-				// Walk the chain. `visited` guards against a rope that loops back on itself,
-				// which Hammer permits and which would otherwise spin here forever.
-				// Keep the entities, not just their positions: Slack/Width/Subdiv are authored per
-				// NODE, and each span takes them from the node it begins at.
-				var nodes   = new List<VmfEntity>();
-				var points  = new List<Vector3>();
-				var visited = new HashSet<VmfEntity>();
-				var current = start;
-				while (current != null && visited.Add(current))
-				{
-					if (TryGetEntityOrigin(current, out var origin))
-					{
-						points.Add(origin);
-						nodes.Add(current);
-					}
-					if (!current.TryGetProperty("NextKey", out string nextKey) || string.IsNullOrEmpty(nextKey))
-						break;
-					if (!nodesByName.TryGetValue(nextKey, out current))
-						break;
-				}
+				var settings = VmfRope.SettingsOf(link.Rope);
+				var start = VmfRope.OriginOf(link.Rope);
+				var hasEnd = link.End != null;
+				// A dangling rope without an end starts out toward the world origin: nothing ever sets the end point the
+				// client spreads its nodes toward.
+				var end = hasEnd ? VmfRope.OriginOf(link.End) : Vector3.zero;
+				var ropeLength = VmfRope.RopeLength(start, end, hasEnd);
+				var springLength = VmfRope.SpringLength(ropeLength, settings.Slack, settings.Nodes);
+				var nodes = VmfRope.Settle(start, end, springLength, settings.Nodes, lockEnd: !settings.Dangling);
+				var points = VmfRope.RenderPoints(nodes, settings.Subdivisions, settings.Barbed);
 
-				if (points.Count < 2)
+				// A dangling rope with no length left collapses onto its start, where there is nothing to draw
+				var extent = 0.0f;
+				for (int i = 1; i < points.Length; i++)
+					extent = Mathf.Max(extent, (points[i] - points[0]).sqrMagnitude);
+				if (extent < 1e-6f)
 					continue;
 
-				var sampled     = new List<Vector3>();
-				var widthKeys   = new List<Keyframe>();
-				for (int i = 0; i < points.Count - 1; i++)
-				{
-					var spanNode = nodes[i];
-					if (!spanNode.TryGetProperty("Slack", out float slack)) slack = kDefaultSlack;
-					if (!spanNode.TryGetProperty("Subdiv", out float subdiv)) subdiv = kDefaultSubdiv;
+				var positions = new Vector3[points.Length];
+				for (int i = 0; i < points.Length; i++)
+					positions[i] = VmfWorldConverter.Swizzle(points[i]) * SourceEngineUnits.VmfInvMeters;
 
-					var samples = Mathf.Clamp(Mathf.RoundToInt(subdiv) * 2, 2, 32);
-					var from = points[i];
-					var to   = points[i + 1];
-					var span = Vector3.Distance(from, to);
-
-					// Sag by a parabola whose extra arc length matches this node's slack: for a
-					// shallow parabola of depth d over span L the arc is ~L*(1 + 8d^2/(3L^2)), so
-					// matching the slack gives d = sqrt(3*L*slack/8). It droops by the amount the
-					// mapper actually asked for rather than a made-up constant.
-					var slackMeters = slack * SourceEngineUnits.VmfInvMeters;
-					var sag = (span > 0.0001f) ? Mathf.Sqrt((3f * span * slackMeters) / 8f) : 0f;
-
-					// Only the final span emits its end point, so shared nodes are not duplicated.
-					var lastSample = (i == points.Count - 2) ? samples : samples - 1;
-					for (int step = 0; step <= lastSample; step++)
-					{
-						var t = step / (float)samples;
-						var point = Vector3.Lerp(from, to, t);
-						point.y -= sag * 4f * t * (1f - t);
-						sampled.Add(point);
-					}
-				}
-
-				// Width is per node too, so drive a width curve keyed at the node boundaries
-				// rather than flattening the whole rope to one thickness.
-				for (int i = 0; i < nodes.Count; i++)
-				{
-					if (!nodes[i].TryGetProperty("Width", out float nodeWidth)) nodeWidth = kDefaultWidth;
-					var t = (nodes.Count < 2) ? 0f : i / (float)(nodes.Count - 1);
-					widthKeys.Add(new Keyframe(t, nodeWidth * SourceEngineUnits.VmfInvMeters));
-				}
-
-				var ropeObject = new GameObject($"Rope {start.Id}");
+				var ropeObject = new GameObject($"Rope {link.Rope.Id}");
+				ropeObject.SetActive(false);
 				ropeObject.transform.parent = GetRopesGroupOrCreate(parent);
 
 				var lineRenderer = ropeObject.AddComponent<LineRenderer>();
-				lineRenderer.useWorldSpace   = true;
-				lineRenderer.positionCount   = sampled.Count;
-				lineRenderer.SetPositions(sampled.ToArray());
-				lineRenderer.widthMultiplier = 1f;
-				lineRenderer.widthCurve = new AnimationCurve(widthKeys.ToArray());
-				lineRenderer.textureMode     = LineTextureMode.Tile;
-				lineRenderer.alignment       = LineAlignment.View;
+				lineRenderer.useWorldSpace     = true;
+				lineRenderer.positionCount     = positions.Length;
+				lineRenderer.SetPositions(positions);
+				lineRenderer.widthMultiplier   = settings.Width * SourceEngineUnits.VmfInvMeters;
+				lineRenderer.widthCurve        = AnimationCurve.Constant(0, 1, 1);
+				lineRenderer.alignment         = LineAlignment.View;
+				lineRenderer.textureMode       = LineTextureMode.RepeatPerSegment;
+				// Negative: textures are imported upside down, and texture coordinates turned with them
+				var textureHeight = RopeTextureHeight(gameResources, settings.Material, textureHeights);
+				lineRenderer.textureScale      = new Vector2(-VmfRope.TextureStep(ropeLength, settings, textureHeight), 1);
+				lineRenderer.generateLightingData = true;
 				lineRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
-				if (start.TryGetProperty("RopeMaterial", out string ropeMaterial) &&
-					!string.IsNullOrEmpty(ropeMaterial))
-				{
-					var material = gameResources.ImportVMT(ropeMaterial);
-					if (material != null)
-						lineRenderer.sharedMaterial = material;
-				}
+				var material = gameResources.ImportVMT(settings.Material);
+				if (material != null)
+					lineRenderer.sharedMaterial = material;
+
+				// Hidden in Hammer means hidden from the compiler too, so it is imported but inactive
+				ropeObject.SetActive(!link.Rope.IsHidden);
 				created++;
 			}
 
-			if (created > 0)
-				Debug.Log($"Imported {created} rope(s) from {chainStarts.Count} move_rope chain(s).");
+			Debug.Log($"Imported {created} rope(s) from {links.Count} rope entities that draw one.");
+		}
+
+		/// <summary>
+		/// The height of a rope material's base texture, in texels, which the texture's step along the rope is a fraction
+		/// of (C_RopeKeyframe::FinishInit reads GetMappingHeight). The VTF says, whether or not the texture is imported yet.
+		/// A material that can't be found gets 1; the game would draw it with its error material and that one's height.
+		/// </summary>
+		private static int RopeTextureHeight(GameResources gameResources, string material, Dictionary<string, int> cache)
+		{
+			if (cache.TryGetValue(material, out var height))
+				return height;
+
+			var vmt = gameResources.LoadVMT(material);
+			var vtf = (vmt != null && !string.IsNullOrEmpty(vmt.BaseTextureName)) ? gameResources.LoadVTF(vmt.BaseTextureName) : null;
+			height = (vtf != null && vtf.Height > 0) ? vtf.Height : 1;
+			cache[material] = height;
+			return height;
 		}
 
 		/// <summary>

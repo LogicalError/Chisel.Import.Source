@@ -295,7 +295,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                             world.Entities.Add(entity);
                         }
 
-                        // parse entity properties.
+                        // parse entity properties, keeping their text too - the game reads that (VmfEntity.PropertyText).
+                        if (TryParseKeyText(line, out key, out var text))
+                            entity.PropertyText[key] = text;
                         if (TryParsekeyValue(line, out key, out value))
                         {
                             switch (key)
@@ -376,17 +378,30 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         /// <param name="key">The key that was found.</param>
         /// <param name="value">The value that was found.</param>
         /// <returns>True if successful else false.</returns>
-        private bool TryParsekeyValue(string line, out string key, out object value)
+        /// <summary>
+        /// Splits a key/value line into the key and the value's text, as written.
+        /// </summary>
+        /// <param name="line">The line (e.g. '"targetname" "cable_1"').</param>
+        /// <returns>True if the line is a key/value pair else false.</returns>
+        private static bool TryParseKeyText(string line, out string key, out string text)
         {
             key = "";
-            value = null;
+            text = null;
 
             if (!line.Contains('"')) return false;
             if (line.Count(c => c == '"') != 4) return false; // fixes 'ep1_c17_03.vmf' "rulescript" with newline in the value.
             int idx = line.IndexOf('"', 1);
 
             key = line.Substring(1, idx - 1);
-            string rawvalue = line.Substring(idx + 3, line.Length - idx - 4);
+            text = line.Substring(idx + 3, line.Length - idx - 4);
+            return true;
+        }
+
+        private bool TryParsekeyValue(string line, out string key, out object value)
+        {
+            value = null;
+
+            if (!TryParseKeyText(line, out key, out var rawvalue)) return false;
             if (rawvalue.Length == 0) return false;
 
             string rawvalue_string = rawvalue;

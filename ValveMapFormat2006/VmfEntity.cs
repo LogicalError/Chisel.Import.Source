@@ -60,6 +60,19 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         public Dictionary<string, object> Properties = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
+        /// The properties as the map writes them, keys matched as in <see cref="Properties"/>. The game reads every key
+        /// from its text, while <see cref="Properties"/> gives a value a type by its shape - which makes a name like "1"
+        /// a number - and leaves out the keys written empty.
+        /// </summary>
+        public Dictionary<string, string> PropertyText = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>A key's text as the map writes it, or null when the entity doesn't have the key.</summary>
+        public string GetText(string name)
+        {
+            return PropertyText.TryGetValue(name, out var text) ? text : null;
+        }
+
+        /// <summary>
         /// The entity's I/O connections, in the order the map lists them. An output is written once for
         /// every connection it drives, so these cannot live in <see cref="Properties"/>.
         /// </summary>
@@ -116,6 +129,72 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                 default:
                     return 0;
             }
+        }
+
+        /// <summary>
+        /// Reads a property the way the game's float keyfields read one, with atof: the number the value starts with, and
+        /// 0 when it starts with none or the key is missing.
+        /// </summary>
+        public float GetFloat(string name)
+        {
+            if (!Properties.TryGetValue(name, out var value))
+                return 0;
+
+            switch (value)
+            {
+                case int integer:
+                    return integer;
+                case float number:
+                    return number;
+                // atof stops at the space.
+                case VmfVector3 vector:
+                    return vector.X;
+                case VmfVector4 vector:
+                    return vector.X;
+                case string text:
+                    return ParseLeadingFloat(text);
+                default:
+                    return 0;
+            }
+        }
+
+        static float ParseLeadingFloat(string text)
+        {
+            var i = 0;
+            while (i < text.Length && char.IsWhiteSpace(text[i]))
+                i++;
+
+            var start = i;
+            if (i < text.Length && (text[i] == '-' || text[i] == '+'))
+                i++;
+            var digits = 0;
+            for (; i < text.Length && text[i] >= '0' && text[i] <= '9'; i++)
+                digits++;
+            if (i < text.Length && text[i] == '.')
+            {
+                i++;
+                for (; i < text.Length && text[i] >= '0' && text[i] <= '9'; i++)
+                    digits++;
+            }
+            if (digits == 0)
+                return 0;
+
+            // An exponent only counts when digits follow it.
+            if (i < text.Length && (text[i] == 'e' || text[i] == 'E'))
+            {
+                var exponent = i + 1;
+                if (exponent < text.Length && (text[exponent] == '-' || text[exponent] == '+'))
+                    exponent++;
+                if (exponent < text.Length && text[exponent] >= '0' && text[exponent] <= '9')
+                {
+                    i = exponent;
+                    while (i < text.Length && text[i] >= '0' && text[i] <= '9')
+                        i++;
+                }
+            }
+
+            return (float)double.Parse(text.Substring(start, i - start), System.Globalization.NumberStyles.Float,
+                                       System.Globalization.CultureInfo.InvariantCulture);
         }
 
         static int ParseLeadingInteger(string text)
