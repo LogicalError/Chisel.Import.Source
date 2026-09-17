@@ -600,12 +600,13 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             return false;
 		}
 
-		// The material a face gets, from what the face produces in Source (VmfBrushContents.FaceKindOf)
+		// What a face produces in Source, from its material
 		static VmfFaceKind FaceKind(GameResources gameResources, VmfBrushRole role, VmfSolidSide side)
 		{
 			return VmfBrushContents.FaceKindOf(role, gameResources.GetMaterialContents(side.Material));
 		}
 
+		// The material a face gets, from what the face produces in Source (VmfBrushContents.FaceKindOf)
 		static Material FaceMaterial(GameResources gameResources, VmfBrushRole role, VmfSolidSide side, bool brushFace)
 		{
 			switch (FaceKind(gameResources, role, side))
