@@ -63,6 +63,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
             // Built on the first decal that needs it, since only overlays name brush faces.
             VmfDecalConverter.SideIndex decalSides = null;
+            // Draws the decals on the brushes the world import built (VmfBrushIndex)
+            VmfChiselDecals chiselDecals = null;
 
             // iterate through all entities.
             for (int e = 0; e < world.Entities.Count; e++)
@@ -79,8 +81,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     case "keyframe_rope":
                         break;
 
-                    // Decals are imported as data only: nothing draws them yet (see VmfDecal). With the
-                    // optional decals package installed, infodecal keeps its own case further down.
+                    // Decals are imported as data (VmfDecal) and drawn by Chisel decals (VmfChiselDecals). With
+                    // the optional decals package installed, infodecal keeps its own case further down.
 #if !COM_AETERNUMGAMES_CHISEL_DECALS
                     case "infodecal":
 #endif
@@ -88,7 +90,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     case "info_projecteddecal":
                     {
                         decalSides ??= new VmfDecalConverter.SideIndex(world);
-                        VmfDecalConverter.Import(parent, entity, decalSides);
+                        var decal = VmfDecalConverter.Import(parent, entity, decalSides);
+                        chiselDecals ??= new VmfChiselDecals(gameResources, VmfBrushIndex.Of(world));
+                        chiselDecals.Create(decal);
                         break;
                     }
 
@@ -527,6 +531,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
             Debug.Log($"Source map import (entities): {entityStopwatch.Elapsed.TotalSeconds:0.0}s for {world.Entities.Count} entities" +
                       ((world.Entities.Count > 0) ? $" ({entityStopwatch.Elapsed.TotalMilliseconds / world.Entities.Count:0.0} ms/entity)" : ""));
+            if (chiselDecals != null)
+                Debug.Log(chiselDecals.Report());
         }
 
         /// <summary>

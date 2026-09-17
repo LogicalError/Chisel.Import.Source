@@ -193,6 +193,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			// of their own next to the world model, so they never cut it.
 			var brushModels = new VmfBrushModels(model != null ? model.transform.parent : null);
 
+			// Which brush and surface shows each side, for the decals the entity import puts on them
+			var brushIndex = VmfBrushIndex.Begin(world);
+
 			// iterate through all world solids.
 			for (int i = 0; i < world.Solids.Count; i++)
             {
@@ -211,6 +214,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					// prepare for uv calculations of clip planes after cutting.
 					var planes = new float4[solid.Sides.Count];
 					var planeSurfaces = new ChiselSurface[solid.Sides.Count];
+					var sideDrawn = new bool[solid.Sides.Count];
 
 					var center = Vector3.zero;
 					for (int j = 0; j < solid.Sides.Count; j++)
@@ -248,6 +252,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 						// Only a displacement blends a second layer; any other face gets the material as vbsp patches it.
 						Material material = FaceMaterial(gameResources, role, side, brushFace: side.Displacement == null);
+						// A displacement replaces its face, so decals can't go on the brush there
+						sideDrawn[j] = side.Displacement == null && FaceKind(gameResources, role, side) == VmfFaceKind.Drawn;
 
 						// fallback to default material.
 						if (material == null)
@@ -368,6 +374,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 					// finalize the brush by snapping planes and centering the pivot point.
 					go.transform.position += brushMesh.CenterAndSnapPlanes(ref surfaceDefinitions);
+					brushIndex.Add(solid, go, brushMesh, sideDrawn);
 
                 foreach (Transform child in go.transform)
                     child.position -= go.transform.position;
@@ -421,6 +428,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						// prepare for uv calculations of clip planes after cutting.
 						var planes = new float4[solid.Sides.Count];
 						var planeSurfaces = new ChiselSurface[solid.Sides.Count];
+						var sideDrawn = new bool[solid.Sides.Count];
 						// clip all the sides out of the brush.
 						for (int j = solid.Sides.Count; j-- > 0;)
 						{
@@ -436,6 +444,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 							// Displacements only exist on world brushes, so every face here gets the material as vbsp
 							// patches it for a plain brush face.
 							Material material = FaceMaterial(gameResources, role, side, brushFace: true);
+							sideDrawn[j] = FaceKind(gameResources, role, side) == VmfFaceKind.Drawn;
 
 							// fallback to default material.
 							if (material == null)
@@ -493,6 +502,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
                     // finalize the brush by snapping planes and centering the pivot point.
                     go.transform.position += brushMesh.CenterAndSnapPlanes(ref surfaceDefinitions);
+                    brushIndex.Add(solid, go, brushMesh, sideDrawn);
 
                     // detail brushes that do not affect the CSG world.
                     //if (entity.ClassName == "func_detail")
@@ -591,9 +601,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		}
 
 		// The material a face gets, from what the face produces in Source (VmfBrushContents.FaceKindOf)
+		static VmfFaceKind FaceKind(GameResources gameResources, VmfBrushRole role, VmfSolidSide side)
+		{
+			return VmfBrushContents.FaceKindOf(role, gameResources.GetMaterialContents(side.Material));
+		}
+
 		static Material FaceMaterial(GameResources gameResources, VmfBrushRole role, VmfSolidSide side, bool brushFace)
 		{
-			switch (VmfBrushContents.FaceKindOf(role, gameResources.GetMaterialContents(side.Material)))
+			switch (FaceKind(gameResources, role, side))
 			{
 				case VmfFaceKind.Sky:        return RenderSettings.skybox;
 				case VmfFaceKind.Collision:  return ChiselDefaultMaterials.Defaults.collisionSurfacesMaterial;

@@ -5,7 +5,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 {
 	/// <summary>
 	/// A Source decal entity - <c>infodecal</c>, <c>info_overlay</c> or <c>info_projecteddecal</c> - imported
-	/// as data. Nothing draws it yet.
+	/// as data. The importer draws it with Chisel decals in the "Decals" group of the model it lands on
+	/// (<c>VmfChiselDecals</c>).
 	/// <para>
 	/// Source places each kind by different rules, so the values it places them by are kept as the map wrote
 	/// them, in Source's own units and axes. Whatever draws these later can then start from the real rules
@@ -25,8 +26,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 	/// </list>
 	/// <para>
 	/// It lives in a runtime assembly, the importer's own being editor-only, because Unity only attaches
-	/// components whose scripts are in one. Its GameObject is tagged EditorOnly, so for now none of this reaches
-	/// a player build.
+	/// components whose scripts are in one. Its GameObject is tagged EditorOnly, so this data doesn't reach a
+	/// player build; the Chisel decals that draw it are not tagged.
 	/// </para>
 	/// </summary>
 	[DisallowMultipleComponent]
