@@ -234,6 +234,15 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             return (render, collide, active);
         }
 
+        /// <summary>
+        /// Whether a brush entity's model casts and receives shadows: not with "disableshadows" or
+        /// "disablereceiveshadows" (the FGDs' Shadow and RenderFields keys)
+        /// </summary>
+        public static (bool cast, bool receive) EntityShadows(VmfEntity entity)
+        {
+            return (entity.GetInteger("disableshadows") == 0, entity.GetInteger("disablereceiveshadows") == 0);
+        }
+
         /// <summary>What a face with this material produces, on a brush with this role</summary>
         public static VmfFaceKind FaceKindOf(VmfBrushRole role, VMTContents side)
         {

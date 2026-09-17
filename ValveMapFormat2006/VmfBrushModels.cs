@@ -57,6 +57,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                 {
                     var state = VmfBrushContents.EntityState(entity);
                     var model = SharedModel("Brush Entities", EntityName(entity), state.render, state.collide, !state.active);
+                    (model.renderSettings.castShadows, model.renderSettings.receiveShadows) = VmfBrushContents.EntityShadows(entity);
                     // func_physbox is a physics object, which a physics clip stops
                     VmfCollisionLayers.PlaceOnMoverLayer(model.gameObject, null, entity.ClassName);
                     return model;
@@ -129,6 +130,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             {
                 model.colliderSettings = new ChiselGeneratedColliderSettings();
                 model.colliderSettings.Reset();
+            }
+            if (model.renderSettings == null)
+            {
+                model.renderSettings = new ChiselGeneratedRenderSettings();
+                model.renderSettings.Reset();
             }
             return model;
         }
