@@ -189,6 +189,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			s_TextureSizes.Clear();
 			var importStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
+			// Every brush is imported. The ones that aren't world geometry (triggers, clips, hints...) go to models
+			// of their own next to the world model, so they never cut it.
+			var brushModels = new VmfBrushModels(model != null ? model.transform.parent : null);
+
 			// iterate through all world solids.
 			for (int i = 0; i < world.Solids.Count; i++)
             {
@@ -198,18 +202,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				try
 				{
 					VmfSolid solid = world.Solids[i];
-
-					// don't add triggers to the scene.
-					if (solid.Sides.Count > 0 && IsSpecialMaterial(solid.Sides[0].Material))
-						continue;
-
-					// HACK: Fix me in the future!
-					// HACK: Chisel doesn't support collision brushes yet- skip them completely!
-					if (solid.Sides.Count > 0 && IsInvisibleMaterial(solid.Sides[0].Material))
-						continue;
-					// HACK: Fix me in the future!
-
-
+					var (role, roleName) = VmfBrushContents.RoleOf(null, VmfBrushContents.SideMaterialsOf(solid), gameResources.GetMaterialContents);
 
 
 					// prepare for any displacements.
@@ -253,34 +246,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						//if (IsInvisibleMaterial(side.Material))
 						//pr.IsVisible = false;
 
-						Material material = null;
-
-						var isSkybox = IsSkyboxMaterial(side.Material);
-						var isInvisible = !isSkybox && IsInvisibleMaterial(side.Material);
-						var isExcluded = !isSkybox && !isInvisible && IsExcludedMaterial(side.Material);
-
-						if (isSkybox)
-						{
-							material = RenderSettings.skybox;
-						} else
-						// detect collision-only polygons.
-						if (isInvisible)
-						{
-							material = ChiselDefaultMaterials.Defaults.collisionSurfacesMaterial;
-							//surface.DestinationFlags &= ~SurfaceDestinationFlags.RenderReceiveCastShadows;
-						} else
-						// detect excluded polygons.
-						if (isExcluded)
-						{
-							material = ChiselDefaultMaterials.Defaults.shadowOnlySurfacesMaterial;
-							//surface.DestinationFlags &= SurfaceDestinationFlags.CastShadows;
-							//surface.DestinationFlags |= SurfaceDestinationFlags.Collidable;
-						} else
-						{
-							// find the material in the unity project automatically. Only a displacement
-							// blends a second layer; any other face gets the material as vbsp patches it.
-							material = gameResources.ImportVMT(side.Material, brushFace: side.Displacement == null);
-						}
+						// Only a displacement blends a second layer; any other face gets the material as vbsp patches it.
+						Material material = FaceMaterial(gameResources, role, side, brushFace: side.Displacement == null);
 
 						// fallback to default material.
 						if (material == null)
@@ -323,11 +290,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 
 					// build a very large cube brush.
-					// What the brush is made of, as vbsp decides it: a brush with any glass, grate, slime or water side is
-					// that, and it is named after it
-					var (contents, contentsName) = VmfBrushContents.Of(solid, gameResources);
-					ChiselBrushComponent go = ChiselComponentFactory.Create<ChiselBrushComponent>($"{contentsName} {solid.Id}", model);
-					go.Contents = contents;
+					ChiselBrushComponent go = CreateBrush(gameResources, brushModels, model, null, solid, role, roleName);
 
 					// Hidden in Hammer means the map compiler skips it too (vbsp has no handler for
 					// the `hidden` block either), so it is imported but left inactive.
@@ -429,42 +392,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				{ 
 					VmfEntity entity = world.Entities[e];
 
-					// skip entities that chisel can't handle.
-					switch (entity.ClassName)
-					{
-						case "func_areaportal":
-						case "func_areaportalwindow":
-						case "func_capturezone":
-						case "func_changeclass":
-						case "func_combine_ball_spawner":
-						case "func_dustcloud":
-						case "func_dustmotes":
-						case "func_nobuild":
-						case "func_nogrenades":
-						case "func_occluder":
-						case "func_precipitation":
-						case "func_proprespawnzone":
-						case "func_regenerate":
-						case "func_respawnroom":
-						case "func_smokevolume":
-						case "func_viscluster":
-							continue;
-					}
-
 					// iterate through all entity solids.
 					for (int i = 0; i < entity.Solids.Count; i++)
 					{
 						VmfSolid solid = entity.Solids[i];
-
-						// don't add triggers to the scene.
-						if (solid.Sides.Count > 0 && IsSpecialMaterial(solid.Sides[0].Material))
-							continue;
-
-						// HACK: Fix me in the future!
-						// HACK: Chisel doesn't support collision brushes yet- skip them completely!
-						if (solid.Sides.Count > 0 && IsInvisibleMaterial(solid.Sides[0].Material))
-							continue;
-						// HACK: Fix me in the future!
+						var (role, roleName) = VmfBrushContents.RoleOf(entity.ClassName, VmfBrushContents.SideMaterialsOf(solid), gameResources.GetMaterialContents);
 
 						var center = Vector3.zero;
 						for (int j = 0; j < solid.Sides.Count; j++)
@@ -501,32 +433,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 							//if (IsInvisibleMaterial(side.Material))
 							//    pr.IsVisible = false;
 
-							Material material = null;
+							// Displacements only exist on world brushes, so every face here gets the material as vbsp
+							// patches it for a plain brush face.
+							Material material = FaceMaterial(gameResources, role, side, brushFace: true);
 
-							if (IsSkyboxMaterial(side.Material))
-							{
-								material = RenderSettings.skybox;
-							} else
-							// detect collision-only polygons.
-							if (IsInvisibleMaterial(side.Material))
-							{
-								material = ChiselDefaultMaterials.Defaults.collisionSurfacesMaterial;
-								//surface.DestinationFlags &= ~SurfaceDestinationFlags.RenderReceiveCastShadows;
-							} else
-							// detect excluded polygons.
-							if (IsExcludedMaterial(side.Material))
-							{
-								material = ChiselDefaultMaterials.Defaults.shadowOnlySurfacesMaterial;
-								//surface.DestinationFlags &= SurfaceDestinationFlags.CastShadows;
-								//surface.DestinationFlags |= SurfaceDestinationFlags.Collidable;
-							} else
-							{ 
-								// find the material in the unity project automatically. Displacements only
-								// exist on world brushes, so every face here gets the material as vbsp
-								// patches it for a plain brush face.
-								material = gameResources.ImportVMT(side.Material, brushFace: true);
-							}
-							
 							// fallback to default material.
 							if (material == null)
 							{
@@ -550,11 +460,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 							planeSurfaces[j] = surface;
 						}
 
-						// What the brush is made of, as vbsp decides it: a brush with any glass, grate, slime or water side is
-						// that, and it is named after it
-						var (contents, contentsName) = VmfBrushContents.Of(solid, gameResources);
-						ChiselBrushComponent go = ChiselComponentFactory.Create<ChiselBrushComponent>($"{contentsName} {solid.Id}", model);
-						go.Contents = contents;
+						ChiselBrushComponent go = CreateBrush(gameResources, brushModels, model, entity, solid, role, roleName);
 
 						// Hidden in Hammer means the map compiler skips it too (vbsp has no handler for
 						// the `hidden` block either), so it is imported but left inactive.
@@ -684,58 +590,35 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             return false;
 		}
 
-		/// <summary>
-		/// Determines whether the specified name is a skybox material, these brushes will use the environment skybox.
-		/// </summary>
-		/// <param name="name">The name of the material.</param>
-		/// <returns><c>true</c> if the specified name is a special material; otherwise, <c>false</c>.</returns>
-		private static bool IsSkyboxMaterial(string name)
+		// The material a face gets, from what the face produces in Source (VmfBrushContents.FaceKindOf)
+		static Material FaceMaterial(GameResources gameResources, VmfBrushRole role, VmfSolidSide side, bool brushFace)
 		{
-			switch (name.ToUpperInvariant().Replace('\\', '/'))
+			switch (VmfBrushContents.FaceKindOf(role, gameResources.GetMaterialContents(side.Material)))
 			{
-				case "TOOLS/TOOLSSKYBOX":
-				case "TOOLS/TOOLS2DSKYBOX":
-					return true;
+				case VmfFaceKind.Sky:        return RenderSettings.skybox;
+				case VmfFaceKind.Collision:  return ChiselDefaultMaterials.Defaults.collisionSurfacesMaterial;
+				case VmfFaceKind.ShadowOnly: return ChiselDefaultMaterials.Defaults.shadowOnlySurfacesMaterial;
+				case VmfFaceKind.Hidden:     return ChiselDefaultMaterials.Defaults.userHiddenSurfacesMaterial;
+				// find the material in the unity project automatically.
+				default:                     return gameResources.ImportVMT(side.Material, brushFace: brushFace);
 			}
-			return false;
 		}
 
-		/// <summary>
-		/// Determines whether the specified name is a special material, these brush will not be
-		/// imported into Chisel.
-		/// </summary>
-		/// <param name="name">The name of the material.</param>
-		/// <returns><c>true</c> if the specified name is a special material; otherwise, <c>false</c>.</returns>
-		private static bool IsSpecialMaterial(string name)
-        {
-            switch (name.ToUpperInvariant().Replace('\\', '/'))
-            {
-                case "TOOLS/TOOLSTRIGGER":
-                case "TOOLS/TOOLSBLOCK_LOS":
-                case "TOOLS/TOOLSBLOCKBULLETS":
-                case "TOOLS/TOOLSBLOCKBULLETS2":
-                case "TOOLS/TOOLSBLOCKSBULLETSFORCEFIELD": // did the wiki have a typo or is BLOCKS truly plural?
-                case "TOOLS/TOOLSBLOCKLIGHT":
-                case "TOOLS/TOOLSCLIMBVERSUS":
-                case "TOOLS/TOOLSHINT":
-                case "TOOLS/TOOLSINVISIBLE":
-                case "TOOLS/TOOLSINVISIBLENONSOLID":
-                case "TOOLS/TOOLSINVISIBLELADDER":
-                case "TOOLS/TOOLSINVISMETAL":
-                case "TOOLS/TOOLSNODRAWROOF":
-                case "TOOLS/TOOLSNODRAWWOOD":
-                case "TOOLS/TOOLSNODRAWPORTALABLE":
-                case "TOOLS/TOOLSSKIP":
-                case "TOOLS/TOOLSFOG":
-                case "TOOLS/TOOLSSKYBOX":
-                case "TOOLS/TOOLS2DSKYBOX":
-                case "TOOLS/TOOLSSKYFOG":
-                case "TOOLS/TOOLSFOGVOLUME":
-				case "TOOLS/TOOLS_XOGVOLUME":
-					return true;
-            }
-            return false;
-        }
+		// A world brush goes to the world model and is named after what it is made of, as vbsp decides it: a brush
+		// with any glass, grate, slime or water side is that ("Glass 247412"). Any other brush goes to the model for
+		// its role, named after the role ("Clip 1234", "Trigger 5678"), and keeps the default contents: it never
+		// meets the world's brushes.
+		static ChiselBrushComponent CreateBrush(GameResources gameResources, VmfBrushModels brushModels, ChiselModelComponent world,
+												VmfEntity entity, VmfSolid solid, VmfBrushRole role, string roleName)
+		{
+			if (role != VmfBrushRole.World)
+				return ChiselComponentFactory.Create<ChiselBrushComponent>($"{roleName} {solid.Id}", brushModels.ModelFor(role, roleName, entity, solid));
+
+			var (contents, contentsName) = VmfBrushContents.Of(solid, gameResources);
+			var brush = ChiselComponentFactory.Create<ChiselBrushComponent>($"{contentsName} {solid.Id}", world);
+			brush.Contents = contents;
+			return brush;
+		}
 
 		/// <summary>
 		/// A displacement vertex's colour: white, with Hammer's painted alpha (0..255) as its alpha - the
