@@ -1160,6 +1160,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <remarks>
 		/// Only the texture is wanted - these entities are drawn with shaders of their own, not with
 		/// whatever the VMT would turn into - but going through the VMT keeps the game's own choice of it.
+		/// It is the material's $basetexture, which the game reads as colour, so it is claimed as colour
+		/// like any texture a material samples that way (Texture2DImporter.MarkAsColor).
 		/// </remarks>
 		private static Texture2D GetEffectTexture(GameResources gameResources, string materialName)
 		{
@@ -1172,6 +1174,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			texture = (images != null && images.Length > 0) ? images[0] : null;
 			if (texture == null)
 				Debug.LogError($"Can't find the texture for {materialName}");
+			else
+				Texture2DImporter.MarkAsColor(texture);
 			effectTextures[materialName] = texture;
 			return texture;
 		}
