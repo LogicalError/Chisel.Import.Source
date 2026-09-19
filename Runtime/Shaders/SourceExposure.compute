@@ -1,0 +1,116 @@
+// Source's automatic exposure (game/client/viewpostprocess.cpp) for URP: measure the frame, work out the scale Source
+// would hold it at, and scale it, before URP's post processing - bloom included, as in Source. See SourceExposure.cs.
+#pragma kernel KClear
+#pragma kernel KHistogram
+#pragma kernel KExposure
+#pragma kernel KApply
+
+// Log2 luminance the histogram covers, in bins of 1/8 of a stop; anything outside goes into the end bins
+#define BINS 160
+#define LOG_MIN (-16.0)
+#define LOG_MAX (4.0)
+
+Texture2D<float4> _Source;
+RWTexture2D<float4> _Destination;
+RWStructuredBuffer<uint> _Histogram;
+// [0]: the scale the camera is at; 0 before its first frame
+RWStructuredBuffer<float> _Exposure;
+
+float4 _Region;     // the first pixel measured (x, y) and the step between measured pixels (x, y)
+float4 _Count;      // how many pixels are measured across and down, and the frame's size
+float4 _Params;     // smallest and largest scale, how far towards a brighter and a darker target this frame (0..1)
+float4 _Targets;    // where the brightest 2% go, Source's dead zone around it (low, high), where the median goes at least
+
+groupshared uint gs_Histogram[BINS];
+
+float Luminance709(float3 color)
+{
+    // luminance_compare_ps2x.fxc
+    return dot(color, float3(0.2125, 0.7154, 0.0721));
+}
+
+[numthreads(64, 1, 1)]
+void KClear(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < BINS)
+        _Histogram[id.x] = 0;
+}
+
+[numthreads(16, 16, 1)]
+void KHistogram(uint3 id : SV_DispatchThreadID, uint index : SV_GroupIndex)
+{
+    for (uint i = index; i < BINS; i += 256)
+        gs_Histogram[i] = 0;
+    GroupMemoryBarrierWithGroupSync();
+
+    if (id.x < (uint)_Count.x && id.y < (uint)_Count.y)
+    {
+        uint2 pixel = uint2(_Region.xy + float2(id.xy) * _Region.zw);
+        float luminance = Luminance709(_Source[pixel].rgb);
+        float position = saturate((log2(max(luminance, 1e-10)) - LOG_MIN) / (LOG_MAX - LOG_MIN));
+        InterlockedAdd(gs_Histogram[min((uint)(position * BINS), BINS - 1)], 1);
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    for (uint j = index; j < BINS; j += 256)
+    {
+        if (gs_Histogram[j] > 0)
+            InterlockedAdd(_Histogram[j], gs_Histogram[j]);
+    }
+}
+
+// The luminance that the given fraction of the measured pixels is brighter than, interpolated inside its bin
+float LuminanceWithFractionAbove(float total, float fraction)
+{
+    float needed = fraction * total;
+    float counted = 0;
+    for (int i = BINS - 1; i >= 0; i--)
+    {
+        float count = _Histogram[i];
+        if (count > 0 && counted + count >= needed)
+        {
+            float inside = (needed - counted) / count;
+            return exp2(LOG_MIN + (LOG_MAX - LOG_MIN) * (i + 1 - inside) / BINS);
+        }
+        counted += count;
+    }
+    return exp2(LOG_MIN);
+}
+
+[numthreads(1, 1, 1)]
+void KExposure()
+{
+    float total = 0;
+    for (uint i = 0; i < BINS; i++)
+        total += _Histogram[i];
+    if (total == 0)
+        return;
+
+    // GetTargetTonemapScalar: the brightest 2% at 60%, unless the median would stay under 3%; both measured
+    // on gamma-encoded luminance, which _Targets holds converted to linear
+    float current = _Exposure[0];
+    float brightest = LuminanceWithFractionAbove(total, 0.02);
+    float median    = LuminanceWithFractionAbove(total, 0.5);
+    float target    = max(_Targets.x / max(brightest, 1e-6), _Targets.w / max(median, 1e-6));
+
+    // FindLocationOfPercentBrightPixels' sticky bin: while the brightest 2% already land in the target's own bin,
+    // the scale stays where it is
+    float measured = brightest * current;
+    if (current > 0 && measured >= _Targets.y && measured <= _Targets.z)
+        target = current;
+    target = clamp(target, _Params.x, _Params.y);
+
+    // Towards it in stops; a camera's first frame starts there
+    float blend = (current <= 0) ? 1 : ((target > current) ? _Params.z : _Params.w);
+    float stops = lerp(log2(max(current, 1e-6)), log2(target), blend);
+    _Exposure[0] = exp2(stops);
+}
+
+[numthreads(8, 8, 1)]
+void KApply(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)_Count.z || id.y >= (uint)_Count.w)
+        return;
+    float4 color = _Source[id.xy];
+    _Destination[id.xy] = float4(color.rgb * _Exposure[0], color.a);
+}

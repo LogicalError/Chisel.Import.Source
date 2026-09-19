@@ -385,18 +385,25 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			var spawnSettings = GetSpawnSettings(world);
 			var profile = GetOrCreateProfile(mapName);
 
-			// URP has no auto exposure, so the map gets the fixed exposure Source holds its dark
-			// interiors at: the top of its range. a map's station asks for a scale of 2.8 there,
-			// against a limit of 1.7.
-			var exposure = spawnSettings.AutoExposureMax;
-			var colorAdjustments = GetOrAdd<ColorAdjustments>(profile);
-			colorAdjustments.postExposure.Override(Mathf.Log(exposure, 2));
+			// Source's automatic exposure, in the map's range. URP has none of its own, so the importer's
+			// renderer feature does it, before bloom as in Source.
+			var featureChanges = EnsureExposureFeature();
+			if (featureChanges != null)
+				Debug.Log("Source map import (post processing): " + featureChanges);
+			var exposure = GetOrAdd<SourceExposure>(profile);
+			exposure.enabled.Override(true);
+			exposure.minimum.Override(spawnSettings.AutoExposureMin);
+			exposure.maximum.Override(spawnSettings.AutoExposureMax);
 
-			// Source scales the frame before bloom picks out its bright pixels, and URP applies its
-			// exposure after bloom. Bloom grows with the pixels over the threshold, so lowering the
-			// threshold by the exposure gives the same halos.
+			// A fixed exposure from before it
+			if (profile.TryGet(out ColorAdjustments colorAdjustments))
+			{
+				profile.Remove<ColorAdjustments>();
+				UnityEngine.Object.DestroyImmediate(colorAdjustments, true);
+			}
+
 			var bloom = GetOrAdd<Bloom>(profile);
-			bloom.threshold.Override(Mathf.LinearToGammaSpace(Mathf.GammaToLinearSpace(BloomThreshold) / exposure));
+			bloom.threshold.Override(BloomThreshold);
 			bloom.intensity.Override(BloomIntensityPerScale * spawnSettings.BloomScale);
 
 			// Source has no tone curve, the frame simply clips.
@@ -415,9 +422,70 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			var volume = GetOrCreateVolume(parent, profile);
 			RenderPostProcessingOnCameras(volume.gameObject.scene, volume.gameObject.layer);
 
-			Debug.Log($"{mapName} post processing: exposure {exposure} (auto exposure range {spawnSettings.AutoExposureMin}-{spawnSettings.AutoExposureMax}), " +
+			Debug.Log($"{mapName} post processing: auto exposure {spawnSettings.AutoExposureMin}-{spawnSettings.AutoExposureMax}, " +
 					  $"bloom {spawnSettings.BloomScale}, color correction " +
 					  (spawnSettings.ColorCorrections.Count == 0 ? "none" : string.Join(", ", spawnSettings.ColorCorrections.Select(c => $"{c.Filename} x{c.Weight}"))));
+		}
+
+		/// <summary>Where the importer keeps the shader <see cref="SourceExposureFeature"/> renders with.</summary>
+		public const string ExposureShaderPath = "Packages/com.aeternumgames.chisel.import.source/Runtime/Shaders/SourceExposure.compute";
+
+		/// <summary>
+		/// Adds <see cref="SourceExposureFeature"/> to each renderer of the active URP asset that lacks it, the way
+		/// the renderer's inspector adds a feature. It does nothing for a camera whose volumes don't turn it on.
+		/// </summary>
+		/// <returns>What was added, or null when nothing was.</returns>
+		public static string EnsureExposureFeature()
+		{
+			var pipeline = UniversalRenderPipeline.asset;
+			if (pipeline == null)
+				return null;
+			var shader = AssetDatabase.LoadAssetAtPath<ComputeShader>(ExposureShaderPath);
+			if (shader == null)
+			{
+				Debug.LogWarning($"Source exposure: {ExposureShaderPath} is missing, the maps won't be exposed.");
+				return null;
+			}
+
+			var added = new List<string>();
+			foreach (var rendererData in pipeline.rendererDataList)
+			{
+				if (rendererData == null)
+					continue;
+				var existing = rendererData.rendererFeatures.OfType<SourceExposureFeature>().FirstOrDefault();
+				if (existing != null)
+				{
+					if (existing.Shader == null)
+					{
+						existing.Shader = shader;
+						EditorUtility.SetDirty(existing);
+					}
+					continue;
+				}
+
+				var feature = ScriptableObject.CreateInstance<SourceExposureFeature>();
+				feature.name   = "Source Exposure";
+				feature.Shader = shader;
+				AssetDatabase.AddObjectToAsset(feature, rendererData);
+				AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out _, out long localId);
+
+				// The feature list and its map of local ids, as ScriptableRendererDataEditor keeps them
+				var serialized = new SerializedObject(rendererData);
+				var features = serialized.FindProperty("m_RendererFeatures");
+				var map      = serialized.FindProperty("m_RendererFeatureMap");
+				features.arraySize++;
+				features.GetArrayElementAtIndex(features.arraySize - 1).objectReferenceValue = feature;
+				map.arraySize++;
+				map.GetArrayElementAtIndex(map.arraySize - 1).longValue = localId;
+				serialized.ApplyModifiedProperties();
+				rendererData.SetDirty();
+				EditorUtility.SetDirty(rendererData);
+				added.Add(rendererData.name);
+			}
+			if (added.Count == 0)
+				return null;
+			AssetDatabase.SaveAssets();
+			return "added the Source Exposure renderer feature to " + string.Join(", ", added);
 		}
 
 #if COM_UNITY_POSTPROCESSING
@@ -445,10 +513,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			if (legacyProfile == null)
 				return false;
 
-			var postExposure = 0.0f;
+			// The v2 profile kept the map's range as the luminance its key of 0.6 was held between: [0.6 / max, 0.6 / min]
+			float autoExposureMin = DefaultAutoExposureMin, autoExposureMax = DefaultAutoExposureMax;
 			if (legacyProfile.TryGetSettings<UnityEngine.Rendering.PostProcessing.AutoExposure>(out var autoExposure) &&
 				autoExposure != null && autoExposure.active)
-				postExposure = autoExposure.maxLuminance.value;
+			{
+				autoExposureMax = 0.6f / Mathf.Pow(2, autoExposure.minLuminance.value);
+				autoExposureMin = 0.6f / Mathf.Pow(2, autoExposure.maxLuminance.value);
+			}
 
 			var bloomScale = 0.0f;
 			var bloomThreshold = BloomThreshold;
@@ -467,11 +539,20 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				UnityAssets.Save(profile, destinationPath);
 			}
 
-			GetOrAdd<ColorAdjustments>(profile).postExposure.Override(postExposure);
-			var exposure = Mathf.Pow(2, postExposure);
+			var featureChanges = EnsureExposureFeature();
+			if (featureChanges != null)
+				Debug.Log("Source map post processing: " + featureChanges);
+			var exposure = GetOrAdd<SourceExposure>(profile);
+			exposure.enabled.Override(true);
+			exposure.minimum.Override(autoExposureMin);
+			exposure.maximum.Override(autoExposureMax);
+			if (profile.TryGet(out ColorAdjustments colorAdjustments))
+			{
+				profile.Remove<ColorAdjustments>();
+				UnityEngine.Object.DestroyImmediate(colorAdjustments, true);
+			}
 			var bloom = GetOrAdd<Bloom>(profile);
-			bloom.threshold.Override(Mathf.LinearToGammaSpace(
-				Mathf.GammaToLinearSpace(bloomThreshold) / Mathf.Max(exposure, 0.0001f)));
+			bloom.threshold.Override(bloomThreshold);
 			bloom.intensity.Override(BloomIntensityPerScale * bloomScale);
 			GetOrAdd<Tonemapping>(profile).mode.Override(TonemappingMode.None);
 
@@ -491,7 +572,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			AssetDatabase.SaveAssets();
 			var volume = GetOrCreateVolume(parent, profile);
 			RenderPostProcessingOnCameras(volume.gameObject.scene, volume.gameObject.layer);
-			Debug.Log($"{mapName} legacy post processing migrated to URP: exposure {exposure}, bloom {bloomScale}. " +
+			Debug.Log($"{mapName} legacy post processing migrated to URP: auto exposure {autoExposureMin}-{autoExposureMax}, bloom {bloomScale}. " +
 					  "The PPv2-baked color LUT was omitted; re-import from the VMF to rebuild it from Source data.");
 			return true;
 		}
