@@ -83,6 +83,11 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     if (layerChanges != null)
                         Debug.Log("Source map import (collision layers): " + layerChanges);
 
+                    // Textures have a tree of their own; an older import left them next to the materials
+                    var textureChanges = TextureFolders.MoveTexturesOutOfMaterials();
+                    if (textureChanges != null)
+                        Debug.Log("Source map import (textures): " + textureChanges);
+
                     // create parent game object to store all of the imported content.
                     go = new GameObject("Source Map - " + Path.GetFileNameWithoutExtension(path));
                     go.SetActive(false);
