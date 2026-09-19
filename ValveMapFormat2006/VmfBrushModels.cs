@@ -90,7 +90,15 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                 return model;
 
             model = CreateModel(name, Group(group), render, collide);
-            if (kClipLayers.TryGetValue(name, out var layerName))
+#if UNITY_EDITOR
+            UnityEditor.GameObjectUtility.SetStaticEditorFlags(model.gameObject, 
+                //UnityEditor.StaticEditorFlags.ContributeGI | 
+				UnityEditor.StaticEditorFlags.BatchingStatic |
+				UnityEditor.StaticEditorFlags.OccludeeStatic |
+				UnityEditor.StaticEditorFlags.OccluderStatic |
+				UnityEditor.StaticEditorFlags.ReflectionProbeStatic);
+#endif
+			if (kClipLayers.TryGetValue(name, out var layerName) && layerName != null)
             {
                 var layer = LayerMask.NameToLayer(layerName);
                 if (layer >= 0)
