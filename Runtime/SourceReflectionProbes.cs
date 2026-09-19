@@ -5,13 +5,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 {
 	/// <summary>
 	/// The reflection probes a Source level has at its env_cubemap entities, handed to the Source shaders
-	/// (ChiselSourceProbes.cginc in the VPK tools): the probes' baked cubemaps packed into one cubemap array, and a volume
+	/// (ChiselSourceProbes.hlsl in the VPK tools): the probes' baked cubemaps packed into one cubemap array, and a volume
 	/// whose cells each hold the index of the probe nearest to them.
 	/// <para>
-	/// Source gives a surface the env_cubemap nearest to it - vbsp per brush side, the engine per model. Unity picks one
-	/// probe per renderer, and Chisel's world renderers each span the whole map, so the shaders look the nearest probe up
-	/// per pixel instead. The probes stay ordinary ReflectionProbe components, baked by Unity, which Unity's own shaders use
-	/// as usual.
+	/// Source gives a surface the env_cubemap nearest to it - vbsp per brush side, the engine per model. Chisel's world
+	/// renderers each span the whole map, and URP takes at most 64 visible probes where a map can have hundreds, so the
+	/// shaders look the nearest probe up per pixel instead. The probes stay ordinary ReflectionProbe components, baked by
+	/// Unity with the scene's lighting, which Unity's own shaders use as usual; the array is packed again whenever Unity
+	/// has baked them.
 	/// </para>
 	/// <para>
 	/// The shader data is global, so of several of these the one enabled last is the one in use.
@@ -51,10 +52,19 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		void OnEnable()
 		{
 			Apply();
+#if UNITY_EDITOR
+			// The probes' textures change when Unity bakes them (Generate Lighting, Bake Reflection Probes)
+			UnityEditor.Lightmapping.bakeCompleted += Apply;
+			UnityEditor.Lightmapping.lightingDataUpdated += Apply;
+#endif
 		}
 
 		void OnDisable()
 		{
+#if UNITY_EDITOR
+			UnityEditor.Lightmapping.bakeCompleted -= Apply;
+			UnityEditor.Lightmapping.lightingDataUpdated -= Apply;
+#endif
 			if (s_Current == this)
 			{
 				// Without probes the shaders reflect Unity's own reflection, the sky; the black array only keeps a
@@ -66,8 +76,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		}
 
 		/// <summary>
-		/// Packs the probes' textures and hands them to the shaders; call it again after the probes are baked. Probes whose
-		/// textures can't be packed together - missing, or of another size or format - leave the shaders reflecting black.
+		/// Packs the probes' textures and hands them to the shaders. It runs when the component is enabled and, in the editor,
+		/// after every bake. Probes whose textures can't be packed together - not baked yet, or of another size or format -
+		/// leave the shaders reflecting black.
 		/// </summary>
 		public void Apply()
 		{
@@ -81,6 +92,13 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				return;
 			}
 
+			// Not baked yet is a state of its own, until Unity bakes the scene's lighting
+			if (System.Array.TrueForAll(probes, probe => probe == null || probe.texture == null))
+			{
+				Suspend();
+				return;
+			}
+
 			var first = probes[0] != null ? probes[0].texture : null;
 			foreach (var probe in probes)
 			{
@@ -89,7 +107,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					texture.mipmapCount != first.mipmapCount || texture.dimension != UnityEngine.Rendering.TextureDimension.Cube)
 				{
 					Debug.LogWarning($"{name}: reflection probe {(probe != null ? probe.name : "(missing)")} has no baked cubemap like the others; " +
-									 "bake the probes again", this);
+									 "bake the scene's lighting again", this);
 					Suspend();
 					return;
 				}

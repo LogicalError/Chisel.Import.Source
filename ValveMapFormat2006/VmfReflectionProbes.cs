@@ -9,8 +9,9 @@ using UnityEngine.Rendering;
 namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 {
 	/// <summary>
-	/// A map's env_cubemap entities as Unity reflection probes, which Unity bakes from the imported level, and the volume
-	/// that hands each Source surface the probe nearest to it (<see cref="SourceReflectionProbes"/>).
+	/// A map's env_cubemap entities as Unity reflection probes, baked by Unity like any other (Generate Lighting, or Bake
+	/// Reflection Probes), and the volume that hands each Source surface the probe nearest to it
+	/// (<see cref="SourceReflectionProbes"/>).
 	/// <para>
 	/// Source gives brush sides the env_cubemap nearest to them when the map compiles - unless an env_cubemap's "sides" key
 	/// claims them, which a lookup per pixel can't follow - and models the one nearest to them as they draw.
@@ -158,6 +159,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// </summary>
 		public static SourceReflectionProbes Import(Transform parent, VmfWorld world, string mapName)
 		{
+			// Imports from before Unity baked these kept each probe's cubemap in an EXR of its own, which nothing uses now
+			var customBakes = PackagePath.GetAssetPath($"maps/{mapName}/reflection_probes").Replace(System.IO.Path.DirectorySeparatorChar, '/');
+			if (AssetDatabase.IsValidFolder(customBakes))
+				AssetDatabase.DeleteAsset(customBakes);
+
 			var cubemaps = world.Entities.FindAll(entity => entity.ClassName == "env_cubemap");
 			if (cubemaps.Count == 0)
 				return null;
@@ -181,7 +187,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				probeObject.transform.SetParent(group.transform, false);
 				probeObject.transform.position = VmfWorldConverter.Swizzle(VmfRope.OriginOf(entity)) * SourceEngineUnits.VmfInvMeters;
 				var probe = probeObject.AddComponent<ReflectionProbe>();
-				probe.mode = ReflectionProbeMode.Custom;
+				// Baked with the scene's lighting, so a bake in the Lighting window updates it like any other probe
+				probe.mode = ReflectionProbeMode.Baked;
 				probe.resolution = resolution;
 				probe.hdr = true;
 				// Source's cubemaps reflect as if everything were infinitely far away
@@ -268,29 +275,24 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		}
 
 		/// <summary>
-		/// Bakes the map's reflection probes from the level as it now is, each into an EXR beside the map's other assets, and
-		/// hands them to the shaders. While they bake the Source surfaces reflect nothing, so no probe bakes in another's
-		/// stale reflection.
+		/// Bakes the scene's lighting from the level as it now is, as the Lighting window's Generate Lighting does, which bakes
+		/// the reflection probes with it, and hands them to the shaders. Unity keeps them with the scene's lighting data, so
+		/// the scene has to be saved; an unsaved one gets them from Generate Lighting once it is. While they bake the Source
+		/// surfaces reflect nothing, so no probe bakes in another's reflection from an earlier import.
 		/// </summary>
 		public static void Bake(SourceReflectionProbes component, string mapName)
 		{
 			if (component == null)
 				return;
-			component.Suspend();
-			var baked = 0;
-			foreach (var probe in component.probes)
+			if (string.IsNullOrEmpty(component.gameObject.scene.path))
 			{
-				if (probe == null || !probe.isActiveAndEnabled)
-					continue;
-				var destinationPath = PackagePath.GetOutputPath($"maps/{mapName}/reflection_probes/{probe.name}.exr");
-				PackagePath.EnsureDirectoriesExist(destinationPath);
-				if (Lightmapping.BakeReflectionProbe(probe, AssetPathOf(destinationPath)))
-					baked++;
-				else
-					Debug.LogWarning($"{mapName}: reflection probe {probe.name} did not bake", probe);
+				Debug.Log($"{mapName}: the reflection probes are baked with the scene's lighting: save the scene, then Generate Lighting");
+				return;
 			}
+			component.Suspend();
+			if (!Lightmapping.Bake())
+				Debug.LogWarning($"{mapName}: the scene's lighting did not bake, so its reflection probes aren't baked either");
 			component.Apply();
-			Debug.Log($"{mapName}: baked {baked} of {component.probes.Length} reflection probes");
 		}
 	}
 }
