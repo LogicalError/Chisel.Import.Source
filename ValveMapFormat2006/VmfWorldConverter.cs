@@ -396,13 +396,19 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                 ReportProgress("Chisel: Importing Source Engine Map (2/3)", "Converting Hammer Entities To Chisel Brushes", e, world.Entities.Count);
 #endif
 				try
-				{ 
+				{
 					VmfEntity entity = world.Entities[e];
+					var isWater = string.Equals(entity.ClassName, "func_water_analog", StringComparison.OrdinalIgnoreCase);
+					var waterMaterialName = isWater ? entity.GetText("WaterMaterial") : null;
+					var waterMaterial = !string.IsNullOrEmpty(waterMaterialName)
+						? gameResources.ImportVMT(waterMaterialName, brushFace: true)
+						: null;
 
 					// iterate through all entity solids.
 					for (int i = 0; i < entity.Solids.Count; i++)
 					{
 						VmfSolid solid = entity.Solids[i];
+						var waterSurfaceSide = isWater ? WaterSurfaceSideIndex(solid) : -1;
 						var (role, roleName) = VmfBrushContents.RoleOf(entity.ClassName, VmfBrushContents.SideMaterialsOf(solid), gameResources.GetMaterialContents);
 
 						var center = Vector3.zero;
@@ -441,10 +447,22 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 							//if (IsInvisibleMaterial(side.Material))
 							//    pr.IsVisible = false;
 
-							// Displacements only exist on world brushes, so every face here gets the material as vbsp
-							// patches it for a plain brush face.
-							Material material = FaceMaterial(gameResources, role, side, brushFace: true);
-							sideDrawn[j] = FaceKind(gameResources, role, side) == VmfFaceKind.Drawn;
+							Material material;
+							if (isWater)
+							{
+								// func_water_analog brushes are authored entirely with toolsnodraw. Source
+								// replaces only the upper horizontal face with the entity's WaterMaterial;
+								// the remaining faces merely define the moving volume.
+								var isSurface = j == waterSurfaceSide;
+								material = isSurface ? waterMaterial : ChiselDefaultMaterials.Defaults.userHiddenSurfacesMaterial;
+								sideDrawn[j] = isSurface;
+							} else
+							{
+								// Displacements only exist on world brushes, so every face here gets the material as vbsp
+								// patches it for a plain brush face.
+								material = FaceMaterial(gameResources, role, side, brushFace: true);
+								sideDrawn[j] = FaceKind(gameResources, role, side) == VmfFaceKind.Drawn;
+							}
 
 							// fallback to default material.
 							if (material == null)
@@ -524,7 +542,31 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			Debug.Log($"Source map import (world brushes): {totalSeconds:0.0}s total" +
 					  ((world.Solids.Count > 0) ? $" ({solidsLoopSeconds * 1000.0 / world.Solids.Count:0.0} ms/solid)" : "") +
 					  $" - {world.Solids.Count} solids, {world.Entities.Count} entity brushes, {s_TextureSizes.Count} materials");
-        }
+		}
+
+		/// <summary>The upper horizontal face Source turns into a func_water_analog surface.</summary>
+		internal static int WaterSurfaceSideIndex(VmfSolid solid)
+		{
+			if (solid == null || solid.Sides == null)
+				return -1;
+
+			var best = -1;
+			var bestHeight = float.NegativeInfinity;
+			for (int i = 0; i < solid.Sides.Count; i++)
+			{
+				var plane = solid.Sides[i].Plane;
+				var min = Mathf.Min(plane.P1.Z, Mathf.Min(plane.P2.Z, plane.P3.Z));
+				var max = Mathf.Max(plane.P1.Z, Mathf.Max(plane.P2.Z, plane.P3.Z));
+				if (max - min > 0.01f)
+					continue;
+				var height = (plane.P1.Z + plane.P2.Z + plane.P3.Z) / 3.0f;
+				if (height <= bestHeight)
+					continue;
+				best = i;
+				bestHeight = height;
+			}
+			return best;
+		}
 
         private static void CalculateTextureCoordinates(ChiselBrushComponent pr, Vector3 unfixedOrigin, ChiselSurface surface, Plane clip, int textureWidth, int textureHeight, VmfAxis UAxis, VmfAxis VAxis)
 		{

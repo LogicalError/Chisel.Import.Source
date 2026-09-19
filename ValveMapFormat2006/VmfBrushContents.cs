@@ -214,9 +214,13 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             var render  = entity.GetInteger("rendermode") != kRenderNone;
             var collide = true;
             var active  = !entity.IsHidden;
-            var className = entity.ClassName ?? string.Empty;
-            if (className.Equals("func_illusionary", StringComparison.OrdinalIgnoreCase))
-                collide = false;
+			var className = entity.ClassName ?? string.Empty;
+			if (className.Equals("func_water_analog", StringComparison.OrdinalIgnoreCase))
+				// This entity is a moving water volume. Its brush bounds drive the water surface,
+				// but the volume is not a solid collision hull.
+				collide = false;
+			else if (className.Equals("func_illusionary", StringComparison.OrdinalIgnoreCase))
+				collide = false;
             else if (className.Equals("func_brush", StringComparison.OrdinalIgnoreCase))
             {
                 var solidity = entity.GetInteger("Solidity");
