@@ -294,6 +294,56 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						break;
 					}
 
+					// Black Mesa's lens flares: up to twenty screen-space elements around a light (VmfLensFlare), drawn by
+					// the LensFlare shader the way the game's client draws them.
+					case "env_lensflare":
+					{
+						if (!TryGetEntityOrigin(entity, out Vector3 origin))
+							break;
+
+						var elements = VmfLensFlare.ReadElements(entity);
+						var flareShader = FindEffectShader(ref lensFlareShader, kLensFlareShaderName);
+						if (elements.Count == 0 || flareShader == null)
+							break;
+
+						var textures = VmfLensFlare.TexturesOf(elements);
+						var materials = new Material[textures.Count];
+						for (int i = 0; i < textures.Count; i++)
+						{
+							var texture = GetEffectTexture(gameResources, textures[i]);
+							materials[i] = VmfEffectAssets.GetBaseMaterial(textures[i], texture, flareShader, "lens flare");
+						}
+
+						// FlareType 1 is a sun flare: the entity's angles are the sun's, as light_environment's, and the flare
+						// stands wherever the camera looks toward the sun from. The client negates the pitch and places the sun
+						// against that direction.
+						var sunFlare = entity.GetInteger("FlareType") == 1;
+						var attenuation = entity.GetFloat("FlareAttenuation") * SourceEngineUnits.VmfInvMeters;
+						if (!entity.TryGetProperty("GlowProxySize", out float proxySize))
+							proxySize = 2;
+						var mesh = VmfLensFlare.GetMesh(elements, attenuation, proxySize * SourceEngineUnits.VmfInvMeters,
+														entity.GetInteger("FlareStyle"), sunFlare);
+
+						GameObject go = new GameObject("Lens Flare");
+						go.SetActive(false);
+						go.transform.parent = GetEffectsGroupOrCreate(parent, "Lens Flares");
+						go.transform.position = origin;
+						if (sunFlare)
+						{
+							if (!entity.TryGetProperty("angles", out VmfVector3 angles))
+								angles = new(0, 0, 0);
+							SourceEngineUnits.AngleVectors(new Vector3(-angles.X, angles.Y, angles.Z), out var lightDirection, out _, out _);
+							go.transform.rotation = Quaternion.LookRotation(-SourceEngineUnits.Swizzle(lightDirection).normalized);
+						}
+
+						go.AddComponent<MeshFilter>().sharedMesh = mesh;
+						ConfigureEffectRenderer(go.AddComponent<MeshRenderer>()).sharedMaterials = materials;
+
+						// Spawnflag 1 is "Start on"; the game reads a missing key as 0.
+						go.SetActive((entity.GetInteger("spawnflags") & 1) != 0 && !entity.IsHidden);
+						break;
+					}
+
 					default:
 					{
 						// NPCs, items and weapons carry no "model" key - in Source the model comes
@@ -979,6 +1029,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 		private const string kLightGlowShaderName     = "Chisel/Import/LightGlow";
 		private const string kSpotlightBeamShaderName = "Chisel/Import/SpotlightBeam";
+		private const string kLensFlareShaderName     = "Chisel/Import/LensFlare";
 
 		/// <summary>How far CPointSpotlight's halo reaches either side of the lamp, in Source units.</summary>
 		private const float kSpotlightHaloScale = 60.0f;
@@ -994,6 +1045,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 		private static Shader lightGlowShader;
 		private static Shader spotlightBeamShader;
+		private static Shader lensFlareShader;
 		private static Mesh billboardQuad;
 		private static Mesh beamStrip;
 		private static readonly Dictionary<string, Texture2D> effectTextures = new();

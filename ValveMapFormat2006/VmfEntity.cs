@@ -158,7 +158,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             }
         }
 
-        static float ParseLeadingFloat(string text)
+        /// <summary>atof: the number the text starts with, and 0 when it starts with none.</summary>
+        internal static float ParseLeadingFloat(string text)
         {
             var i = 0;
             while (i < text.Length && char.IsWhiteSpace(text[i]))
