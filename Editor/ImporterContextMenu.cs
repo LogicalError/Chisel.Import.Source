@@ -144,6 +144,8 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Path.GetFullPath(path) }, 0);
                     // A reflection probe at every env_cubemap; they are baked once the level they reflect is built (below)
                     reflectionProbes = ValveMapFormat2006.VmfReflectionProbes.Import(go.transform, map, mapName);
+                    // Expensive water's planar reflection ($reflecttexture), drawn for every camera; it finds the water itself
+                    go.AddComponent<ValveMapFormat2006.SourceWaterReflection>();
 #if COM_UNITY_RENDER_PIPELINES_UNIVERSAL
                     // and give the map the exposure, bloom and color correction it has in game.
                     ValveMapFormat2006.VmfPostProcessingConverter.Import(gameResources, go.transform, map, Path.GetFileNameWithoutExtension(path));
