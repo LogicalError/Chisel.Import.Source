@@ -92,6 +92,27 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                         ImportLight(parent, entity);
                         break;
 
+					// https://developer.valvesoftware.com/wiki/Sky_camera
+					// sky_camera places the 3D skybox: the miniature of the far scenery that the level is drawn over, as its
+					// sky. SourceSkyCamera draws it for every camera, the Scene views included.
+					case "sky_camera":
+					{
+						if (!TryGetEntityOrigin(entity, out Vector3 origin))
+							break;
+						var skyObject = new GameObject("3D Skybox (sky_camera)");
+						skyObject.transform.SetParent(parent, false);
+						skyObject.transform.position = origin;
+						var sky = skyObject.AddComponent<SourceSkyCamera>();
+						// The FGD's default scale is 16
+						sky.scale = (entity.TryGetProperty("scale", out float scale) && scale > 0) ? scale : 16;
+						sky.level = parent;
+						sky.nearClipPlane = 2 * SourceEngineUnits.VmfInvMeters;
+						if (entity.TryGetProperty("use_angles", out int useAngles) && useAngles != 0 &&
+							entity.TryGetProperty("angles", out VmfVector3 skyAngles))
+							sky.turn = SkyTurnOf(skyAngles);
+						break;
+					}
+
                     // Decals are imported as data (VmfDecal) and drawn by Chisel decals (VmfChiselDecals). With
                     // the optional decals package installed, infodecal keeps its own case further down.
 #if !COM_AETERNUMGAMES_CHISEL_DECALS
@@ -1420,6 +1441,17 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		}
 
 		#endregion
+
+		/// <summary>
+		/// How Black Mesa's use_angles turns the 3D skybox against the level: the sky_camera's orientation, in Unity's axes
+		/// (Source's x, y, z are Unity's x, z, y). Identity for angles of 0.
+		/// </summary>
+		public static Quaternion SkyTurnOf(VmfVector3 angles)
+		{
+			SourceEngineUnits.AngleVectors(new Vector3(angles.X, angles.Y, angles.Z), out var forward, out _, out var up);
+			var turned = Quaternion.LookRotation(SourceEngineUnits.Swizzle(forward), SourceEngineUnits.Swizzle(up));
+			return turned * Quaternion.Inverse(Quaternion.LookRotation(Vector3.right, Vector3.up));
+		}
 
 		private static bool TryGetEntityOrigin(VmfEntity entity, out Vector3 result)
         {

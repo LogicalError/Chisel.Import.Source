@@ -655,7 +655,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		{
 			switch (FaceKind(gameResources, role, side))
 			{
-				case VmfFaceKind.Sky:        return RenderSettings.skybox;
+				case VmfFaceKind.Sky:        return MaterialImporter.SkyFaceMaterialOf(RenderSettings.skybox);
 				case VmfFaceKind.Collision:  return ChiselDefaultMaterials.Defaults.collisionSurfacesMaterial;
 				case VmfFaceKind.ShadowOnly: return ChiselDefaultMaterials.Defaults.forceShadowOnlySurfacesMaterial;
 				case VmfFaceKind.Hidden:     return ChiselDefaultMaterials.Defaults.userHiddenSurfacesMaterial;
