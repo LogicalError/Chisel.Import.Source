@@ -112,7 +112,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     // Unity reads ambient colors as gamma, so the linear values are converted.
                     if (!map.Entities.Exists(entity => entity.ClassName == "light_environment"))
                     {
-#if COM_UNITY_POSTPROCESSING
+#if COM_UNITY_RENDER_PIPELINES_UNIVERSAL
                         const float fill = 0.35f;
 #else
                         const float fill = 1.0f;
@@ -137,8 +137,8 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     ValveMapFormat2006.VmfEntityConverter.Import(gameResources, go.transform, map);
                     // A reflection probe at every env_cubemap; they are baked once the level they reflect is built (below)
                     reflectionProbes = ValveMapFormat2006.VmfReflectionProbes.Import(go.transform, map, mapName);
-#if COM_UNITY_POSTPROCESSING
-                    // and give the map the auto exposure, bloom and color correction it has in game.
+#if COM_UNITY_RENDER_PIPELINES_UNIVERSAL
+                    // and give the map the exposure, bloom and color correction it has in game.
                     ValveMapFormat2006.VmfPostProcessingConverter.Import(gameResources, go.transform, map, Path.GetFileNameWithoutExtension(path));
 #endif
                 }
@@ -186,7 +186,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
             return go;
         }
 
-#if COM_UNITY_POSTPROCESSING
+#if COM_UNITY_RENDER_PIPELINES_UNIVERSAL
         /// <summary>
         /// Gives a map that was imported earlier its post processing, without importing it again.
         /// </summary>

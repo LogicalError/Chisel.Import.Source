@@ -4,20 +4,21 @@ using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
 
-#if COM_UNITY_POSTPROCESSING
+#if COM_UNITY_RENDER_PIPELINES_UNIVERSAL
 using Chisel.Import.Source.VPKTools;
 
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Rendering.PostProcessing;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 using UnityEngine.SceneManagement;
 #endif
 
 namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 {
 	/// <summary>
-	/// Recreates the look Source's HDR post processing gives a map - auto exposure, bloom and color
-	/// correction - with Unity's Post Processing package.
+	/// Recreates the look Source's HDR post processing gives a map - exposure, bloom and color
+	/// correction - with the Universal Render Pipeline's post processing volumes.
 	/// </summary>
 	/// <remarks>
 	/// Only the state a map spawns in: the inputs its logic_autos send on OnMapSpawn, and the color
@@ -238,30 +239,32 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <summary>Edge length of Source's .raw color correction lookups.</summary>
 		public const int SourceLookupSize = 32;
 
-		/// <summary>Edge length of the lookup Post Processing grades with.</summary>
-		/// <remarks>
-		/// Post Processing indexes an external lookup with LogC-encoded linear color, and the 0..1 that
-		/// Source grades only fills [0.064, 0.569] of each axis of that. 65 samples keep 32 steps across
-		/// it, as many as the Source lookup has.
-		/// </remarks>
-		public const int PostProcessLookupSize = 65;
-
-		// LinearToLogC in Post Processing's Colors.hlsl (Alexa LogC El1000, USE_PRECISE_LOGC off), which
-		// is how its uber shader addresses an external lookup.
-		const double LogC_a = 5.555556, LogC_b = 0.047996, LogC_c = 0.244161, LogC_d = 0.386036;
-
 		/// <summary>
-		/// Converts Source color correction lookups into the external lookup Post Processing grades with.
+		/// Combines Source color correction lookups into the one lookup the Universal Render Pipeline
+		/// grades with, and works out how much of it applies.
 		/// </summary>
+		/// <remarks>
+		/// URP reads its lookup the way Source does (Engine_Post_ps2x.fxc): with the clipped color, gamma
+		/// encoded, on a lattice that runs from 0 to 1 inclusive, and its result is gamma encoded too.
+		/// A lookup as large as Source's therefore holds Source's own values. A lookup of any other size
+		/// samples Source's lattice the way the game filters between its points.
+		/// Source adds the results of its lookups to the uncorrected image by weight, where URP blends a
+		/// single lookup with the image by its contribution. The two agree when that lookup is the
+		/// weighted average of Source's, and the contribution is their total weight (at most 1).
+		/// </remarks>
 		/// <param name="sourceLookups">Each lookup's .raw file: <see cref="SourceLookupSize"/>³ RGB bytes, red varying fastest.</param>
 		/// <param name="weights">How strongly each lookup applies.</param>
-		/// <param name="size">Edge length of the lookup to build.</param>
+		/// <param name="size">Edge length of the lookup to build: the pipeline's color grading lookup size.</param>
+		/// <param name="contribution">How much of the lookup applies, from 0 to 1.</param>
 		/// <returns>
-		/// <paramref name="size"/>³ linear RGB triplets, red varying fastest, or null when a lookup is not
-		/// a .raw lookup.
+		/// The lookup in URP's strip layout, <paramref name="size"/>² wide and <paramref name="size"/>
+		/// high: one block of <paramref name="size"/> columns per blue step, red running across a block
+		/// and green running up. Gamma-encoded RGB triplets, row by row from the bottom. Null when a
+		/// lookup is not a .raw lookup, or when no lookup has any weight.
 		/// </returns>
-		public static float[] BuildPostProcessLookup(IReadOnlyList<byte[]> sourceLookups, IReadOnlyList<float> weights, int size = PostProcessLookupSize)
+		public static float[] BuildLookupStrip(IReadOnlyList<byte[]> sourceLookups, IReadOnlyList<float> weights, int size, out float contribution)
 		{
+			contribution = 0;
 			var count = sourceLookups.Count;
 			for (int i = 0; i < count; i++)
 			{
@@ -269,46 +272,45 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					return null;
 			}
 
-			// Source adds the lookups' results to the uncorrected image by weight (Engine_Post_ps2x.fxc).
-			// The weights themselves come from the closed-source material system, which is taken to
-			// share the whole image out when they add up to more than one, and otherwise to leave the
-			// rest uncorrected - that only matters to the few maps with several global lookups.
+			// The weights come from the closed-source material system, which is taken to share the
+			// whole image out when they add up to more than one, and otherwise to leave the rest
+			// uncorrected - that only matters to the few maps with several global lookups.
 			var total = 0.0;
 			for (int i = 0; i < count; i++)
 				total += Math.Max(0, weights[i]);
-			var lookupScale    = (total > 1) ? 1 / total : 1;
-			var uncorrected    = (total > 1) ? 0 : 1 - total;
+			if (total <= 0)
+				return null;
+			contribution = (float)Math.Min(1, total);
 
-			// Every axis samples the same values, so decode them once: the grid position from LogC back
-			// to linear, clipped to the 0..1 Source renders into, and encoded the way Source's lookup is
-			// addressed.
-			var axis = new double[size];
+			// Where each lattice point of the new lookup falls on Source's lattice. For a lookup of
+			// Source's own size these are whole numbers, so the samples below are exact.
+			var positions = new double[size];
 			for (int i = 0; i < size; i++)
-				axis[i] = LinearToSrgb(Math.Min(1, Math.Max(0, LogCToLinear(i / (double)(size - 1)))));
+				positions[i] = i * (double)(SourceLookupSize - 1) / (size - 1);
 
-			var result = new float[size * size * size * 3];
-			for (int b = 0, o = 0; b < size; b++)
+			var width  = size * size;
+			var result = new float[width * size * 3];
+			for (int blue = 0; blue < size; blue++)
 			{
-				for (int g = 0; g < size; g++)
+				for (int green = 0; green < size; green++)
 				{
-					for (int r = 0; r < size; r++, o += 3)
+					for (int red = 0; red < size; red++)
 					{
-						var red   = axis[r] * uncorrected;
-						var green = axis[g] * uncorrected;
-						var blue  = axis[b] * uncorrected;
+						double sumRed = 0, sumGreen = 0, sumBlue = 0;
 						for (int i = 0; i < count; i++)
 						{
-							var weight = Math.Max(0, weights[i]) * lookupScale;
+							var weight = Math.Max(0, weights[i]) / total;
 							if (weight <= 0)
 								continue;
-							SampleSourceLookup(sourceLookups[i], axis[r], axis[g], axis[b], out var lookupRed, out var lookupGreen, out var lookupBlue);
-							red   += lookupRed   * weight;
-							green += lookupGreen * weight;
-							blue  += lookupBlue  * weight;
+							SampleSourceLookup(sourceLookups[i], positions[red], positions[green], positions[blue], out var lookupRed, out var lookupGreen, out var lookupBlue);
+							sumRed   += lookupRed   * weight;
+							sumGreen += lookupGreen * weight;
+							sumBlue  += lookupBlue  * weight;
 						}
-						result[o    ] = (float)SrgbToLinear(red);
-						result[o + 1] = (float)SrgbToLinear(green);
-						result[o + 2] = (float)SrgbToLinear(blue);
+						var o = (green * width + blue * size + red) * 3;
+						result[o    ] = (float)sumRed;
+						result[o + 1] = (float)sumGreen;
+						result[o + 2] = (float)sumBlue;
 					}
 				}
 			}
@@ -317,8 +319,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 		// Source samples its lookup at color * 31/32 + 0.5/32 (Engine_Post_ps2x.fxc), half a texel in from
 		// either edge, so the lattice points sit on 0, 1/31, ... 1 and filtering between them is plain
-		// trilinear interpolation. The lookup is addressed with the framebuffer's own gamma-encoded
-		// values: neither the framebuffer nor the lookup is read as sRGB there.
+		// trilinear interpolation. The positions are in lattice steps, 0 to 31.
 		static void SampleSourceLookup(byte[] lookup, double red, double green, double blue, out double outRed, out double outGreen, out double outBlue)
 		{
 			const int n = SourceLookupSize;
@@ -341,31 +342,41 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			outRed /= 255; outGreen /= 255; outBlue /= 255;
 		}
 
-		static void ToLattice(double value, out int index, out double fraction)
+		static void ToLattice(double position, out int index, out double fraction)
 		{
-			var position = Math.Min(1, Math.Max(0, value)) * (SourceLookupSize - 1);
+			position = Math.Min(SourceLookupSize - 1, Math.Max(0, position));
 			index    = Math.Min((int)position, SourceLookupSize - 2);
 			fraction = position - index;
 		}
 
-		static double LogCToLinear(double value) => (Math.Pow(10, (value - LogC_d) / LogC_c) - LogC_b) / LogC_a;
-		static double LinearToSrgb(double value) => (value <= 0.0031308) ? 12.92 * value : 1.055 * Math.Pow(value, 1 / 2.4) - 0.055;
-		static double SrgbToLinear(double value) => (value <= 0.04045) ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
-
 		#endregion
 
-#if COM_UNITY_POSTPROCESSING
-		#region Post Processing
+#if COM_UNITY_RENDER_PIPELINES_UNIVERSAL
+		#region Universal Render Pipeline
 
 		/// <summary>The object that holds the map's post processing volume.</summary>
 		public const string VolumeObjectName = "Post Processing";
 
-		// mat_tonemap_percent_target "60": where Source puts the frame's bright pixels.
-		const float ExposureTarget = 0.6f;
+		/// <summary>Where bloom starts, gamma encoded as URP's threshold is.</summary>
+		/// <remarks>
+		/// Black Mesa's own bloom starts on fairly dim pixels (r_bloom_nextgen_threshold 0.1 in its
+		/// skill.cfg), and a threshold of 1 left a map's lamps without the halos they have in game.
+		/// 0.5 was picked against a game screenshot of that station.
+		/// </remarks>
+		public const float BloomThreshold = 0.5f;
+
+		/// <summary>URP's bloom intensity for each unit of the map's bloom scale.</summary>
+		/// <remarks>
+		/// The station's look was picked under Post Processing v2, which turned the map's bloom scale of
+		/// 0.7 into 2^(0.7 / 10) - 1 = 0.05 for each of the six levels of its bloom pyramid and added the
+		/// levels up, 0.3 in all. URP blends its levels into one instead, so the same bloom needs the
+		/// whole 0.3 as its intensity. Source's own bloom is linear in the scale.
+		/// </remarks>
+		public const float BloomIntensityPerScale = 0.43f;
 
 		/// <summary>
-		/// Gives an imported map the post processing it has in game: a global volume with auto exposure,
-		/// bloom and color grading, and a Post-process Layer on the scene's cameras to render it.
+		/// Gives an imported map the post processing it has in game: a global volume with the map's
+		/// exposure, bloom and color correction, rendered by the scene's cameras.
 		/// </summary>
 		/// <param name="parent">The imported map's root, which the volume is put under; null for the scene root.</param>
 		/// <param name="mapName">Names the profile asset, which a re-import updates in place.</param>
@@ -374,77 +385,68 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			var spawnSettings = GetSpawnSettings(world);
 			var profile = GetOrCreateProfile(mapName);
 
-			// Source scales the frame so that the pixel brighter than all but 2% of the others lands on
-			// 60% (mat_tonemap_percent_bright_pixels, mat_tonemap_percent_target), and holds that scale
-			// inside the map's range. Post Processing divides a key by the average luminance of a slice
-			// of the frame's histogram, and holds that AVERAGE inside a range instead. A thin slice
-			// around the 98th percentile with a key of 0.6 is the same rule, as long as the range moves
-			// with it: a scale in [min, max] is a luminance in [0.6 / max, 0.6 / min].
-			var autoExposure = GetOrAddSettings<AutoExposure>(profile);
-			autoExposure.filtering.Override(new Vector2(97, 99));
-			autoExposure.keyValue.Override(ExposureTarget);
-			autoExposure.minLuminance.Override(ToEV(ExposureTarget / spawnSettings.AutoExposureMax));
-			autoExposure.maxLuminance.Override(ToEV(ExposureTarget / spawnSettings.AutoExposureMin));
-			autoExposure.eyeAdaptation.Override(EyeAdaptation.Progressive);
+			// URP has no auto exposure, so the map gets the fixed exposure Source holds its dark
+			// interiors at: the top of its range. a map's station asks for a scale of 2.8 there,
+			// against a limit of 1.7.
+			var exposure = spawnSettings.AutoExposureMax;
+			var colorAdjustments = GetOrAdd<ColorAdjustments>(profile);
+			colorAdjustments.postExposure.Override(Mathf.Log(exposure, 2));
 
-			// Black Mesa's own bloom starts on fairly dim pixels (r_bloom_nextgen_threshold 0.1 in its
-			// skill.cfg), and a threshold of 1 left a map's lamps without the halos they have in game.
-			// 0.5 was picked against a game screenshot of that station, with the map's own bloom scale as
-			// the intensity.
-			var bloom = GetOrAddSettings<Bloom>(profile);
-			bloom.intensity.Override(spawnSettings.BloomScale);
-			bloom.threshold.Override(0.5f);
+			// Source scales the frame before bloom picks out its bright pixels, and URP applies its
+			// exposure after bloom. Bloom grows with the pixels over the threshold, so lowering the
+			// threshold by the exposure gives the same halos.
+			var bloom = GetOrAdd<Bloom>(profile);
+			bloom.threshold.Override(Mathf.LinearToGammaSpace(Mathf.GammaToLinearSpace(BloomThreshold) / exposure));
+			bloom.intensity.Override(BloomIntensityPerScale * spawnSettings.BloomScale);
 
-			// The lookup is the whole grade: Source has no tone curve, the frame simply clips.
-			var lookup = BuildLookupTexture(gameResources, profile, spawnSettings.ColorCorrections, mapName);
-			var colorGrading = GetOrAddSettings<ColorGrading>(profile);
-			colorGrading.enabled.Override(lookup != null);
-			colorGrading.gradingMode.Override(GradingMode.External);
-			colorGrading.externalLut.Override(lookup);
+			// Source has no tone curve, the frame simply clips.
+			var tonemapping = GetOrAdd<Tonemapping>(profile);
+			tonemapping.mode.Override(TonemappingMode.None);
+
+			// The lookup is the whole grade.
+			var lookup = BuildLookupTexture(gameResources, profile, spawnSettings.ColorCorrections, mapName, out var contribution);
+			var colorLookup = GetOrAdd<ColorLookup>(profile);
+			colorLookup.texture.Override(lookup);
+			colorLookup.contribution.Override(lookup != null ? contribution : 0);
 
 			EditorUtility.SetDirty(profile);
 			AssetDatabase.SaveAssets();
 
 			var volume = GetOrCreateVolume(parent, profile);
-			AddLayerToCameras(volume.gameObject.scene, volume.gameObject.layer);
+			RenderPostProcessingOnCameras(volume.gameObject.scene, volume.gameObject.layer);
 
-			Debug.Log($"{mapName} post processing: auto exposure {spawnSettings.AutoExposureMin}-{spawnSettings.AutoExposureMax}, " +
+			Debug.Log($"{mapName} post processing: exposure {exposure} (auto exposure range {spawnSettings.AutoExposureMin}-{spawnSettings.AutoExposureMax}), " +
 					  $"bloom {spawnSettings.BloomScale}, color correction " +
 					  (spawnSettings.ColorCorrections.Count == 0 ? "none" : string.Join(", ", spawnSettings.ColorCorrections.Select(c => $"{c.Filename} x{c.Weight}"))));
 		}
 
-		static float ToEV(float luminance)
-		{
-			// The range of Post Processing's exposure histogram (LogHistogram.rangeMin/rangeMax).
-			return Mathf.Clamp(Mathf.Log(luminance, 2), -9, 9);
-		}
-
-		static PostProcessProfile GetOrCreateProfile(string mapName)
+		static VolumeProfile GetOrCreateProfile(string mapName)
 		{
 			var destinationPath = PackagePath.GetOutputPath($"postprocessing/{mapName}.asset");
-			var profile = UnityAssets.Load<PostProcessProfile>(destinationPath);
-			if (profile == null)
-			{
-				profile = ScriptableObject.CreateInstance<PostProcessProfile>();
-				UnityAssets.Save(profile, destinationPath);
-			}
+			var profile = UnityAssets.Load<VolumeProfile>(destinationPath);
+			if (profile != null)
+				return profile;
+
+			// A map imported before the switch to URP has a Post Processing v2 profile there.
+			if (System.IO.File.Exists(destinationPath))
+				AssetDatabase.DeleteAsset(UnityAssets.GetAssetPath(destinationPath).Replace(System.IO.Path.DirectorySeparatorChar, '/'));
+			profile = ScriptableObject.CreateInstance<VolumeProfile>();
+			UnityAssets.Save(profile, destinationPath);
 			return profile;
 		}
 
-		static T GetOrAddSettings<T>(PostProcessProfile profile) where T : PostProcessEffectSettings
+		static T GetOrAdd<T>(VolumeProfile profile) where T : VolumeComponent
 		{
-			if (!profile.TryGetSettings(out T settings))
-			{
-				settings = profile.AddSettings<T>();
-				// Effect settings are stored inside the profile asset, the way the profile inspector adds them.
-				AssetDatabase.AddObjectToAsset(settings, profile);
-			}
-			settings.enabled.Override(true);
-			return settings;
+			// Components are stored inside the profile asset, the way the profile inspector adds them.
+			if (!profile.TryGet(out T component))
+				component = UnityEditor.Rendering.VolumeProfileFactory.CreateVolumeComponent<T>(profile, overrides: false, saveAsset: false);
+			component.active = true;
+			return component;
 		}
 
-		static Texture3D BuildLookupTexture(GameResources gameResources, PostProcessProfile profile, List<ColorCorrection> colorCorrections, string mapName)
+		static Texture2D BuildLookupTexture(GameResources gameResources, VolumeProfile profile, List<ColorCorrection> colorCorrections, string mapName, out float contribution)
 		{
+			contribution = 0;
 			var lookups = new List<byte[]>();
 			var weights = new List<float>();
 			foreach (var colorCorrection in colorCorrections)
@@ -459,13 +461,16 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				weights.Add(colorCorrection.Weight);
 			}
 
-			var pixels = (lookups.Count > 0) ? BuildPostProcessLookup(lookups, weights) : null;
-			if (lookups.Count > 0 && pixels == null)
+			// URP only grades with a lookup of the size its pipeline asset asks for.
+			var pipeline = UniversalRenderPipeline.asset;
+			var size = (pipeline != null) ? pipeline.colorGradingLutSize : SourceLookupSize;
+			var pixels = (lookups.Count > 0) ? BuildLookupStrip(lookups, weights, size, out contribution) : null;
+			if (lookups.Count > 0 && pixels == null && weights.Any(weight => weight > 0))
 				Debug.LogWarning($"{mapName}: a color correction lookup is not a {SourceLookupSize}³ .raw lookup, color correction left out.");
 
 			// The lookup lives inside the profile asset, so a re-import rewrites it in place.
-			var texture = AssetDatabase.LoadAllAssetsAtPath(AssetDatabase.GetAssetPath(profile)).OfType<Texture3D>().FirstOrDefault();
-			if (texture != null && (pixels == null || texture.width != PostProcessLookupSize))
+			var texture = AssetDatabase.LoadAllAssetsAtPath(AssetDatabase.GetAssetPath(profile)).OfType<Texture2D>().FirstOrDefault();
+			if (texture != null && (pixels == null || texture.width != size * size || texture.height != size))
 			{
 				AssetDatabase.RemoveObjectFromAsset(texture);
 				UnityEngine.Object.DestroyImmediate(texture, true);
@@ -476,7 +481,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 			if (texture == null)
 			{
-				texture = new Texture3D(PostProcessLookupSize, PostProcessLookupSize, PostProcessLookupSize, TextureFormat.RGBAHalf, false);
+				// URP refuses an sRGB lookup: the values are gamma encoded already.
+				texture = new Texture2D(size * size, size, TextureFormat.RGBAHalf, false, true);
 				AssetDatabase.AddObjectToAsset(texture, profile);
 			}
 			texture.name       = $"{mapName} Color Correction";
@@ -493,7 +499,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			return texture;
 		}
 
-		static PostProcessVolume GetOrCreateVolume(Transform parent, PostProcessProfile profile)
+		static Volume GetOrCreateVolume(Transform parent, VolumeProfile profile)
 		{
 			GameObject volumeObject = null;
 			if (parent != null)
@@ -516,47 +522,50 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					volumeObject.layer = parent.gameObject.layer;
 				}
 			}
+			RemoveBuiltInPostProcessing(volumeObject);
 
-			if (!volumeObject.TryGetComponent(out PostProcessVolume volume))
-				volume = volumeObject.AddComponent<PostProcessVolume>();
+			if (!volumeObject.TryGetComponent(out Volume volume))
+				volume = volumeObject.AddComponent<Volume>();
 			volume.isGlobal      = true;
 			volume.sharedProfile = profile;
+			EditorUtility.SetDirty(volume);
 			return volume;
 		}
 
-		// A volume renders nothing unless the camera looking at it has a Post-process Layer that
-		// includes the volume's layer.
-		static void AddLayerToCameras(Scene scene, int volumeLayer)
+		// URP only renders a volume for a camera that renders post processing and includes the volume's
+		// layer; a camera added from code does not render post processing.
+		static void RenderPostProcessingOnCameras(Scene scene, int volumeLayer)
 		{
-			PostProcessResources resources = null;
 			foreach (var root in scene.GetRootGameObjects())
 			{
 				foreach (var camera in root.GetComponentsInChildren<Camera>(true))
 				{
-					if (!camera.TryGetComponent(out PostProcessLayer layer))
-					{
-						// Added from code, the layer does not get the resources the inspector assigns it.
-						resources ??= FindPostProcessResources();
-						layer = camera.gameObject.AddComponent<PostProcessLayer>();
-						layer.Init(resources);
-						layer.volumeTrigger = camera.transform;
-						Debug.Log($"Added a Post-process Layer to camera '{camera.name}' to render the map's post processing.");
-					}
-					layer.volumeLayer |= 1 << volumeLayer;
-					EditorUtility.SetDirty(layer);
+					var cameraData = camera.GetUniversalAdditionalCameraData();
+					if (!cameraData.renderPostProcessing)
+						Debug.Log($"Turned on post processing on camera '{camera.name}' to render the map's post processing.");
+					cameraData.renderPostProcessing = true;
+					cameraData.volumeLayerMask |= 1 << volumeLayer;
+					EditorUtility.SetDirty(cameraData);
+					RemoveBuiltInPostProcessing(camera.gameObject);
 				}
 			}
 		}
 
-		static PostProcessResources FindPostProcessResources()
+		// A map imported before the switch to URP has a Post Processing v2 volume under its root and a
+		// Post-process Layer on its cameras, and URP renders neither.
+		static void RemoveBuiltInPostProcessing(GameObject gameObject)
 		{
-			foreach (var guid in AssetDatabase.FindAssets("t:PostProcessResources"))
-			{
-				var resources = AssetDatabase.LoadAssetAtPath<PostProcessResources>(AssetDatabase.GUIDToAssetPath(guid));
-				if (resources != null)
-					return resources;
-			}
-			return null;
+#if COM_UNITY_POSTPROCESSING
+			foreach (var component in gameObject.GetComponents<UnityEngine.Rendering.PostProcessing.PostProcessVolume>())
+				UnityEngine.Object.DestroyImmediate(component);
+			foreach (var component in gameObject.GetComponents<UnityEngine.Rendering.PostProcessing.PostProcessLayer>())
+				UnityEngine.Object.DestroyImmediate(component);
+#else
+			// Without the package its components are missing scripts. Only the volume's own object is
+			// certain to hold nothing else of the kind.
+			if (gameObject.name == VolumeObjectName)
+				GameObjectUtility.RemoveMonoBehavioursWithMissingScript(gameObject);
+#endif
 		}
 
 		#endregion
