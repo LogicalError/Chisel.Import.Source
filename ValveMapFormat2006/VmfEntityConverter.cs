@@ -76,6 +76,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
                 switch (entity.ClassName)
                 {
+                    // Compile-time include expanded by ImporterContextMenu.ImportInstances.
+                    case "func_instance":
+                        break;
+
                     // Handled by ImportRopes above, which has to look up the entities they end at.
                     case "move_rope":
                     case "keyframe_rope":
