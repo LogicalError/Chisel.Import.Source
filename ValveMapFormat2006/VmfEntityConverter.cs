@@ -227,7 +227,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						// Spawnflag 1 is "Visible only from front".
 						var frontOnly = entity.TryGetProperty("spawnflags", out int glowFlags) && (glowFlags & 1) != 0;
 						ConfigureEffectRenderer(go.AddComponent<MeshRenderer>()).sharedMaterial =
-							GetGlowMaterial(glowShader, glowTexture, GetRenderColor(entity), glowColorScale,
+							GetGlowMaterial(glowShader, kLightGlowMaterialName, glowTexture, GetRenderColor(entity), glowColorScale,
 											new Vector3(minDist, maxDist, outerMaxDist) * SourceEngineUnits.VmfInvMeters,
 											proxySize * SourceEngineUnits.VmfInvMeters,
 											frontOnly ? 1000.0f : 0.0f);
@@ -275,7 +275,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						beam.transform.localScale = new Vector3(beamWidthMeters, beamWidthMeters, beamLength * SourceEngineUnits.VmfInvMeters);
 						beam.AddComponent<MeshFilter>().sharedMesh = GetBeamStrip();
 						ConfigureEffectRenderer(beam.AddComponent<MeshRenderer>()).sharedMaterial =
-							GetBeamMaterial(beamShader, beamTexture, beamColor, beamIntensity);
+							GetBeamMaterial(beamShader, kSpotlightBeamMaterialName, beamTexture, beamColor, beamIntensity);
 
 						var halo = new GameObject("Halo");
 						halo.transform.SetParent(go.transform, false);
@@ -285,7 +285,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						// Only seen when looking into the lamp: the halo fades by twice the dot product of
 						// the beam and the direction to the viewer.
 						ConfigureEffectRenderer(halo.AddComponent<MeshRenderer>()).sharedMaterial =
-							GetGlowMaterial(glowShader, haloTexture, beamColor, beamIntensity, Vector3.zero,
+							GetGlowMaterial(glowShader, kSpotlightHaloMaterialName, haloTexture, beamColor, beamIntensity, Vector3.zero,
 											kSpotlightHaloProxySize * SourceEngineUnits.VmfInvMeters, 2.0f);
 
 						// Spawnflag 1 is "Start On".
@@ -895,16 +895,17 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			if (tintedSpriteMaterials.TryGetValue((material, tint), out var tinted))
 				return tinted;
 
-			// An untinted sprite can use the shared material as it is.
+			// An untinted sprite can use the shared material as it is. A tinted one gets a variant of it, an asset beside
+			// it that every sprite and map with the same tint shares (VmfEffectAssets).
 			if (tint.r == 255 && tint.g == 255 && tint.b == 255 && tint.a == 255)
 				tinted = material;
 			else
 			{
-				tinted = new Material(material) { name = $"{material.name} ({tint.r} {tint.g} {tint.b} {tint.a})" };
 				// Declared as a Color, so Unity converts it to linear for us - a Source rendercolor
 				// is written in gamma space, like every other colour in the format. The alpha is
 				// the brightness and must NOT be converted, which is also what Unity does with it.
-				tinted.SetColor(SpriteTintColor, tint);
+				tinted = VmfEffectAssets.GetMaterialVariant(material, $"{tint.r} {tint.g} {tint.b} {tint.a}",
+															variant => variant.SetColor(SpriteTintColor, tint)) ?? material;
 			}
 
 			tintedSpriteMaterials[(material, tint)] = tinted;
@@ -953,14 +954,13 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		}
 
 		/// <summary>
-		/// Clears the per-import caches. The tinted materials belong to the scene they were built
-		/// for, so holding them across imports would hand a second map the first map's materials.
+		/// Clears the per-import caches. The effect materials and meshes are assets now (VmfEffectAssets), but one can be
+		/// deleted between imports, so each import looks them up again.
 		/// </summary>
 		private static void ResetSpriteCaches()
 		{
 			tintedSpriteMaterials.Clear();
 			spriteTextureSizes.Clear();
-			// The glow and beam materials and meshes belong to their scene just the same.
 			glowMaterials.Clear();
 			beamMaterials.Clear();
 			billboardQuad = null;
@@ -1025,15 +1025,19 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			if (billboardQuad != null)
 				return billboardQuad;
 
-			billboardQuad = new Mesh
+			// An asset, which every glow in every map shares, rather than a mesh in each scene
+			billboardQuad = VmfEffectAssets.GetMesh("billboard quad", () =>
 			{
-				name      = "Billboard Quad",
-				vertices  = new[] { new Vector3(-0.5f, -0.5f, 0), new Vector3(0.5f, -0.5f, 0),
-									new Vector3(-0.5f,  0.5f, 0), new Vector3(0.5f,  0.5f, 0) },
-				uv        = new[] { new Vector2(0, 0), new Vector2(1, 0), new Vector2(0, 1), new Vector2(1, 1) },
-				triangles = new[] { 0, 2, 1, 2, 3, 1 }
-			};
-			billboardQuad.bounds = new Bounds(Vector3.zero, Vector3.one);
+				var mesh = new Mesh
+				{
+					vertices  = new[] { new Vector3(-0.5f, -0.5f, 0), new Vector3(0.5f, -0.5f, 0),
+										new Vector3(-0.5f,  0.5f, 0), new Vector3(0.5f,  0.5f, 0) },
+					uv        = new[] { new Vector2(0, 0), new Vector2(1, 0), new Vector2(0, 1), new Vector2(1, 1) },
+					triangles = new[] { 0, 2, 1, 2, 3, 1 }
+				};
+				mesh.bounds = new Bounds(Vector3.zero, Vector3.one);
+				return mesh;
+			});
 			return billboardQuad;
 		}
 
@@ -1046,15 +1050,18 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			if (beamStrip != null)
 				return beamStrip;
 
-			beamStrip = new Mesh
+			beamStrip = VmfEffectAssets.GetMesh("beam strip", () =>
 			{
-				name      = "Beam Strip",
-				vertices  = new[] { new Vector3(-0.5f, 0, 0), new Vector3(0.5f, 0, 0),
-									new Vector3(-0.5f, 0, 1), new Vector3(0.5f, 0, 1) },
-				triangles = new[] { 0, 2, 1, 2, 3, 1 }
-			};
-			// Turned about its axis, the strip can end up anywhere in the unit box around it.
-			beamStrip.bounds = new Bounds(new Vector3(0, 0, 0.5f), Vector3.one);
+				var mesh = new Mesh
+				{
+					vertices  = new[] { new Vector3(-0.5f, 0, 0), new Vector3(0.5f, 0, 0),
+										new Vector3(-0.5f, 0, 1), new Vector3(0.5f, 0, 1) },
+					triangles = new[] { 0, 2, 1, 2, 3, 1 }
+				};
+				// Turned about its axis, the strip can end up anywhere in the unit box around it.
+				mesh.bounds = new Bounds(new Vector3(0, 0, 0.5f), Vector3.one);
+				return mesh;
+			});
 			return beamStrip;
 		}
 
@@ -1083,34 +1090,45 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 		/// <summary>
 		/// A glow material, shared by every glow that looks the same - maps place these by the dozen with
-		/// identical settings.
+		/// identical settings. It is a variant of the texture's glow material, and both are assets
+		/// (VmfEffectAssets).
 		/// </summary>
-		private static Material GetGlowMaterial(Shader shader, Texture2D texture, Color32 tint, float intensity,
+		private static Material GetGlowMaterial(Shader shader, string materialName, Texture2D texture, Color32 tint, float intensity,
 												Vector3 fadeDistances, float proxyRadius, float directionalFade)
 		{
 			var key = (texture, tint, intensity, fadeDistances, proxyRadius, directionalFade);
 			if (glowMaterials.TryGetValue(key, out var material) && material != null)
 				return material;
 
-			material = new Material(shader) { name = $"{texture.name} ({tint.r} {tint.g} {tint.b})", mainTexture = texture };
-			material.SetColor("_TintColor", tint);
-			material.SetFloat("_Intensity", intensity);
-			material.SetVector("_FadeDistances", fadeDistances);
-			material.SetFloat("_ProxyRadius", proxyRadius);
-			material.SetFloat("_DirectionalFade", directionalFade);
+			var glow = VmfEffectAssets.GetBaseMaterial(materialName, texture, shader, "glow");
+			material = VmfEffectAssets.GetMaterialVariant(glow, FormattableString.Invariant(
+							$"{tint.r} {tint.g} {tint.b} x{intensity:0.####} fade {fadeDistances.x:0.####} {fadeDistances.y:0.####} {fadeDistances.z:0.####} proxy {proxyRadius:0.####} facing {directionalFade:0.####}"),
+						variant =>
+						{
+							variant.SetColor("_TintColor", tint);
+							variant.SetFloat("_Intensity", intensity);
+							variant.SetVector("_FadeDistances", fadeDistances);
+							variant.SetFloat("_ProxyRadius", proxyRadius);
+							variant.SetFloat("_DirectionalFade", directionalFade);
+						});
 			glowMaterials[key] = material;
 			return material;
 		}
 
-		private static Material GetBeamMaterial(Shader shader, Texture2D texture, Color32 tint, float intensity)
+		/// <summary>A beam material: a variant of the texture's beam material, both assets (VmfEffectAssets).</summary>
+		private static Material GetBeamMaterial(Shader shader, string materialName, Texture2D texture, Color32 tint, float intensity)
 		{
 			var key = (texture, tint, intensity);
 			if (beamMaterials.TryGetValue(key, out var material) && material != null)
 				return material;
 
-			material = new Material(shader) { name = $"{texture.name} ({tint.r} {tint.g} {tint.b})", mainTexture = texture };
-			material.SetColor("_TintColor", tint);
-			material.SetFloat("_Intensity", intensity);
+			var beam = VmfEffectAssets.GetBaseMaterial(materialName, texture, shader, "beam");
+			material = VmfEffectAssets.GetMaterialVariant(beam, FormattableString.Invariant($"{tint.r} {tint.g} {tint.b} x{intensity:0.####}"),
+						variant =>
+						{
+							variant.SetColor("_TintColor", tint);
+							variant.SetFloat("_Intensity", intensity);
+						});
 			beamMaterials[key] = material;
 			return material;
 		}
