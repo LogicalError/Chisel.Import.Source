@@ -84,7 +84,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				{
 					if (target.ClassName != "env_tonemap_controller")
 						continue;
-					if (!controllers.TryGetValue(target, out var controller))
+					if (!controllers.TryGetValue(target, out var controller) || controller == null)
 						controllers[target] = controller = new TonemapController { Index = world.Entities.IndexOf(target) };
 
 					var value = ParseFloat(input.Parameter);
@@ -220,7 +220,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		// The parser types a value by what it looks like, so a name made of digits arrives as a number.
 		static string GetString(VmfEntity entity, string key)
 		{
-			return entity.Properties.TryGetValue(key, out var value) ? Convert.ToString(value, CultureInfo.InvariantCulture) : null;
+			return entity.Properties.TryGetValue(key, out var value) && value != null ? Convert.ToString(value, CultureInfo.InvariantCulture) : null;
 		}
 
 		static readonly Regex s_LeadingNumber = new Regex(@"^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?");

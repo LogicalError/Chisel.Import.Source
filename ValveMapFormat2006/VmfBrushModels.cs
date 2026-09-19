@@ -80,7 +80,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         ChiselModelComponent SharedModel(string group, string name, bool render, bool collide, bool hidden = false)
         {
             var key = group + "/" + name;
-            if (models.TryGetValue(key, out var model))
+            if (models.TryGetValue(key, out var model) && model != null)
                 return model;
 
             model = CreateModel(name, Group(group), render, collide);
@@ -98,7 +98,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
         Transform EntityObject(string group, VmfEntity entity)
         {
-            if (entities.TryGetValue(entity, out var entityObject))
+            if (entities.TryGetValue(entity, out var entityObject) && entityObject != null)
                 return entityObject;
 
             entityObject = new GameObject(EntityName(entity)).transform;
@@ -112,7 +112,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
         Transform Group(string name)
         {
-            if (groups.TryGetValue(name, out var group))
+            if (groups.TryGetValue(name, out var group) && group != null)
                 return group;
 
             group = new GameObject(name).transform;
@@ -126,7 +126,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             var model = ChiselComponentFactory.Create<ChiselModelComponent>(name, parent);
             model.CreateRenderComponents   = render;
             model.CreateColliderComponents = collide;
-            if (model.colliderSettings == null)
+			if (model.colliderSettings == null)
             {
                 model.colliderSettings = new ChiselGeneratedColliderSettings();
                 model.colliderSettings.Reset();

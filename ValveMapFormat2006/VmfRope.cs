@@ -203,7 +203,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                 if (string.IsNullOrEmpty(query) || query[0] == '!')
                     return null;
                 if (query.IndexOf('*') < 0)
-                    return firstByName.TryGetValue(query, out var found) ? found : null;
+                    return firstByName.TryGetValue(query, out var found) && found != null ? found : null;
                 foreach (var entity in entities)
                 {
                     if (TryGetName(entity, out var name) && NamesMatch(query, name))

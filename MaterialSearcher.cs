@@ -49,6 +49,8 @@ namespace AeternumGames.Chisel.Import.Source
             // Check whether we already have this material in our cache.
             Material output;
             m_MaterialCache.TryGetValue(name, out output);
+            if (output == null)
+                return null;
             return output;
         }
 

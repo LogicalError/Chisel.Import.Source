@@ -219,7 +219,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		static List<int> GetSideIds(VmfEntity entity)
 		{
 			var result = new List<int>();
-			if (!entity.Properties.TryGetValue("sides", out var value))
+			if (!entity.Properties.TryGetValue("sides", out var value) && value != null)
 				return result;
 
 			switch (value)
