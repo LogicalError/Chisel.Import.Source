@@ -85,6 +85,50 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     case "keyframe_rope":
                         break;
 
+                    // The map's sun and outdoor ambient light. Source treats pitch as a separate
+                    // override for the first component of angles; negative pitch points the rays
+                    // down into the level. SourceEntity.Light performs that direction conversion.
+                    case "light_environment":
+                    {
+                        var go = new GameObject("Environment Light");
+                        go.SetActive(false);
+                        go.transform.parent = GetLightingGroupOrCreate(parent);
+
+                        var light = go.AddComponent<Light>();
+                        light.type = LightType.Directional;
+#if UNITY_EDITOR
+                        light.lightmapBakeType = LightmapBakeType.Mixed;
+#endif
+                        light.shadows = entity.GetFloat("SunSpreadAngle") > 0 ? LightShadows.Soft : LightShadows.Hard;
+                        if (!TryGetEffectiveLight(entity, out var environmentLight))
+                            environmentLight = new VmfVector4(255, 255, 255, 400);
+                        ConvertEnvironmentLightColor(environmentLight, out var lightColor, out var lightIntensity);
+                        light.color = lightColor;
+                        light.intensity = lightIntensity;
+
+                        if (!entity.TryGetProperty("angles", out VmfVector3 angles))
+                            angles = new VmfVector3(0, 0, 0);
+                        if (entity.TryGetProperty("pitch", out float pitch))
+                            angles.X = pitch;
+                        if (!entity.TryGetProperty("origin", out VmfVector3 position))
+                            position = new VmfVector3(0, 0, 0);
+                        SourceEngineUnits.SetUnityTransformWithValveCoordinates(go.transform,
+                            new Vector3(angles.X, angles.Y, angles.Z),
+                            new Vector3(position.X, position.Y, position.Z), SourceEntity.Light);
+
+                        if (TryGetEffectiveLight(entity, "_ambient", "_ambientHDR", "_AmbientScaleHDR", out var ambient))
+                        {
+                            ConvertEnvironmentAmbientColor(ambient, out var ambientColor);
+                            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+                            RenderSettings.ambientLight = ambientColor;
+                        }
+
+                        go.SetActive(!entity.IsHidden);
+                        if (!entity.IsHidden)
+                            RenderSettings.sun = light;
+                        break;
+                    }
+
                     // Decals are imported as data (VmfDecal) and drawn by Chisel decals (VmfChiselDecals). With
                     // the optional decals package installed, infodecal keeps its own case further down.
 #if !COM_AETERNUMGAMES_CHISEL_DECALS
@@ -105,7 +149,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     case "light":
                     {
                         // create a new light object:
-                        GameObject go = new GameObject("Light");
+                        GameObject go = new GameObject("Point Light");
                         go.SetActive(false);
 
 						go.transform.parent = GetLightingGroupOrCreate(parent);
@@ -118,10 +162,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                         Light light = go.AddComponent<Light>();
                         light.type = LightType.Point;
 #if UNITY_EDITOR
-                        light.lightmapBakeType = LightmapBakeType.Baked;
+                        // Source's ordinary point lights are static, but making them bake-only leaves an
+                        // imported map almost black until Unity has produced valid lightmaps. Mixed keeps
+                        // their direct light visible immediately and still lets a bake add the indirect
+                        // contribution, matching the spot-light import below.
+                        light.lightmapBakeType = LightmapBakeType.Mixed;
 #endif
                         light.range = GetLightRange(entity);
-						light.shadows = LightShadows.Soft;
+						light.shadows = LightShadows.Hard;
 
                         // set the light color:
                         GetLightColor(entity, out var lightColor, out var lightIntensity);
@@ -171,13 +219,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                         light.lightmapBakeType = LightmapBakeType.Mixed;
 #endif
                         light.range = GetLightRange(entity);
-						light.shadows = LightShadows.Soft;
+						light.shadows = LightShadows.Hard;
 
-                        // approximate the light cookie cone shape and the spot angle.
-                        if (entity.TryGetProperty("_inner_cone", out int inner_cone) && entity.TryGetProperty("_cone", out int cone))
+						const float maxAngle = 155.0f;
+						// approximate the light cookie cone shape and the spot angle.
+						if (entity.TryGetProperty("_inner_cone", out int inner_cone) && entity.TryGetProperty("_cone", out int cone))
                         {
-                            float lightInnerCone = Mathf.Min(inner_cone * 2, 175);
-                            float lightCone = Mathf.Min(cone * 2, 175);
+                            float lightInnerCone = Mathf.Min(inner_cone * 2.5f, maxAngle);
+                            float lightCone = Mathf.Min(cone * 2, maxAngle);
 
                             if (lightInnerCone > lightCone)
                             {
@@ -187,19 +236,21 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                             }
 
                             // set the spot angle:
-                            light.spotAngle = lightCone;
+                            light.spotAngle = Math.Max(5, lightCone);
+							light.innerSpotAngle = Math.Max(5, Math.Min(lightInnerCone, lightCone - 10));
 
-                            // generate and set the light cookie:
-                            float coneFactor = Mathf.Max(0, lightInnerCone / lightCone);
-                            light.cookie = BuildLightCookieTexture(coneFactor);
+							// generate and set the light cookie:
+							//float coneFactor = Mathf.Max(0, lightInnerCone / lightCone);
+                            //light.cookie = BuildLightCookieTexture(coneFactor);
                         }
                         // backup approach for the spot angle.
                         else if (entity.TryGetProperty("_cone", out int cone2))
                         {
                             // set the spot angle:
-                            float lightCone = Mathf.Min(cone2 * 2, 175);
-                            light.spotAngle = lightCone;
-                        }
+                            float lightCone = Mathf.Min(cone2 * 2, maxAngle);
+                            light.spotAngle = Math.Max(5, lightCone);
+							light.innerSpotAngle = Math.Max(5, lightCone - 10);
+						}
 
                         // set the light color:
                         GetLightColor(entity, out var lightColor, out var lightIntensity);
@@ -1098,16 +1149,22 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// </remarks>
 		private static bool TryGetEffectiveLight(VmfEntity entity, out VmfVector4 light)
 		{
+			return TryGetEffectiveLight(entity, "_light", "_lightHDR", "_lightscaleHDR", out light);
+		}
+
+		private static bool TryGetEffectiveLight(VmfEntity entity, string ldrKey, string hdrKey, string hdrScaleKey,
+		                                         out VmfVector4 light)
+		{
 			// Hammer writes "-1 -1 -1 1" for "same as _light", but what VRAD actually tests for is a
 			// negative component, so "-1 -1 -1 0" means the same thing.
-			if (!TryGetLightKey(entity, "_lightHDR", out light) || light.X < 0 || light.Y < 0 || light.Z < 0 || light.W < 0)
+			if (!TryGetLightKey(entity, hdrKey, out light) || light.X < 0 || light.Y < 0 || light.Z < 0 || light.W < 0)
 			{
-				if (!TryGetLightKey(entity, "_light", out light))
+				if (!TryGetLightKey(entity, ldrKey, out light))
 					return false;
 			}
 
 			// The brightness is a plain multiplier on the light, so the scale folds straight into it.
-			if (entity.TryGetProperty("_lightscaleHDR", out float scaleHDR))
+			if (entity.TryGetProperty(hdrScaleKey, out float scaleHDR))
 				light.W *= scaleHDR;
 			return true;
 		}
@@ -1156,12 +1213,46 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			// Plain white at full brightness for a light that states no color at all.
 			if (!TryGetEffectiveLight(entity, out VmfVector4 light))
 				light = new VmfVector4(255, 255, 255, 255);
+			ConvertLightColor(light, out color, out intensity);
+		}
 
+		private static void ConvertLightColor(VmfVector4 light, out Color color, out float intensity)
+		{
 			color = new Color(Mathf.Max(0, light.X) / 255.0f, Mathf.Max(0, light.Y) / 255.0f, Mathf.Max(0, light.Z) / 255.0f);
 			var brightness = Mathf.Max(0, light.W) / 255.0f;
 			intensity = UnityEngine.Rendering.GraphicsSettings.lightsUseLinearIntensity ? brightness : Mathf.Pow(brightness, 1 / 2.2f);
 			// The intensity slider tops out at 8, and so did the conversion this replaces.
-			intensity = Mathf.Min(8, intensity);
+			intensity = Mathf.Min(8, intensity * 2.5f);
+		}
+
+		/// <summary>
+		/// Converts Source's sunlight and outdoor ambient values without the point-light boost.
+		/// Environment light is global (and is normally baked by VRAD), so treating its fourth
+		/// component like a local light made both the real-time sun and flat ambient several times
+		/// too bright. A brightness of 400 is a common Source daylight baseline and maps cleanly to
+		/// a Unity directional-light intensity of one.
+		/// </summary>
+		private static void ConvertEnvironmentLightColor(VmfVector4 light, out Color color, out float intensity)
+		{
+			color = new Color(Mathf.Max(0, light.X) / 255.0f,
+			                  Mathf.Max(0, light.Y) / 255.0f,
+			                  Mathf.Max(0, light.Z) / 255.0f);
+			intensity = Mathf.Clamp(Mathf.Max(0, light.W) / 400.0f, 0, 8);
+		}
+
+		/// <summary>
+		/// Approximates VRAD's baked environment fill with Unity's real-time flat ambient light.
+		/// The Source value is not a full-strength global illumination color: VRAD applies it while
+		/// solving lightmaps, including surface orientation and occlusion. Unity flat ambient has none
+		/// of that attenuation, so a direct conversion washes out the entire map.
+		/// </summary>
+		private static void ConvertEnvironmentAmbientColor(VmfVector4 light, out Color color)
+		{
+			const float realtimeFlatAmbientScale = 0.2f;
+			var intensity = Mathf.Clamp01(Mathf.Max(0, light.W) / 400.0f) * realtimeFlatAmbientScale;
+			color = new Color(Mathf.Max(0, light.X) / 255.0f,
+			                  Mathf.Max(0, light.Y) / 255.0f,
+			                  Mathf.Max(0, light.Z) / 255.0f) * intensity;
 		}
 
 		#endregion
@@ -1256,7 +1347,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				range = Mathf.Max(range, lightMinRangeUnits);
 			}
 
-			return Mathf.Min(range, lightMaxRangeUnits) * SourceEngineUnits.VmfInvMeters;
+			return Mathf.Min(range, lightMaxRangeUnits) * SourceEngineUnits.VmfInvMeters * 2;
 		}
 
 		/// <summary>

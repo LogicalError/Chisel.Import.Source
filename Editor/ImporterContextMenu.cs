@@ -107,18 +107,13 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     // occlusion, so it floods every interior instead - in a map's tram station it
                     // was about 60% of all the light in view. Until the map is baked, a dim fixed fill
                     // stands in for the bounce light, picked against a game screenshot of that station.
-                    // That picture has the game's post processing on top: exposure brightens the
-                    // station by its full 1.7 and the color correction lifts the mid-tones further. So
-                    // once the map's post processing is recreated the fill has to be 0.35 of what it is
-                    // without - which puts the station's ceiling back where the screenshot has it.
-                    // Unity reads ambient colors as gamma, so the linear values are converted.
+                    // This is a stand-in for VRAD's bounced light, not exposure compensation. Mixed
+                    // lights provide realtime direct light before a bake, but without this fill their
+                    // missing indirect contribution leaves the whole map nearly black. Unity reads
+                    // ambient colors as gamma, so the linear values are converted.
                     if (!map.Entities.Exists(entity => entity.ClassName == "light_environment"))
                     {
-#if COM_UNITY_RENDER_PIPELINES_UNIVERSAL
-                        const float fill = 0.35f;
-#else
-                        const float fill = 1.0f;
-#endif
+                        const float fill = 0.3f;
                         RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
                         RenderSettings.ambientSkyColor     = new Color(0.035f * fill, 0.055f * fill, 0.094f * fill).gamma;
                         RenderSettings.ambientEquatorColor = new Color(0.0505f * fill, 0.0643f * fill, 0.0873f * fill).gamma;
