@@ -300,6 +300,31 @@ namespace AeternumGames.Chisel.Import.Source.Editor
             ValveMapFormat2006.VmfPostProcessingConverter.Import(gameResources, mapRoot, map, mapName);
             UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(scene);
         }
+
+#if COM_UNITY_POSTPROCESSING
+        /// <summary>Converts the active scene's legacy PPv2 map volume when its original VMF is unavailable.</summary>
+        [MenuItem("Chisel/Source Importer/Migrate Active Scene Post Processing to URP")]
+        private static void MigrateActiveScenePostProcessing()
+        {
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                var legacyVolume = root.GetComponentsInChildren<UnityEngine.Rendering.PostProcessing.PostProcessVolume>(true)
+                                       .FirstOrDefault(volume => volume.sharedProfile != null);
+                if (legacyVolume == null)
+                    continue;
+
+                var parent = legacyVolume.transform.parent;
+                var mapName = legacyVolume.sharedProfile.name;
+                if (ValveMapFormat2006.VmfPostProcessingConverter.MigrateLegacyProfile(parent, mapName))
+                {
+                    UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(scene);
+                    return;
+                }
+            }
+            Debug.LogWarning("No legacy Post Processing v2 volume was found in the active scene.");
+        }
+#endif
 #endif
     }
 }

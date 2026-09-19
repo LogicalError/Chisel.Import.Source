@@ -420,6 +420,83 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					  (spawnSettings.ColorCorrections.Count == 0 ? "none" : string.Join(", ", spawnSettings.ColorCorrections.Select(c => $"{c.Filename} x{c.Weight}"))));
 		}
 
+#if COM_UNITY_POSTPROCESSING
+		/// <summary>
+		/// Converts the Post Processing v2 volume left by an older import without requiring the original
+		/// VMF. The old profile asset is kept as a fallback; the converted profile is saved beside it.
+		/// </summary>
+		public static bool MigrateLegacyProfile(Transform parent, string mapName)
+		{
+			GameObject volumeObject = null;
+			if (parent != null)
+			{
+				var child = parent.Find(VolumeObjectName);
+				if (child != null)
+					volumeObject = child.gameObject;
+			}
+			else
+			{
+				volumeObject = SceneManager.GetActiveScene().GetRootGameObjects()
+					.FirstOrDefault(root => root.name == VolumeObjectName);
+			}
+			var legacyVolume = volumeObject != null
+				? volumeObject.GetComponent<UnityEngine.Rendering.PostProcessing.PostProcessVolume>() : null;
+			var legacyProfile = legacyVolume != null ? legacyVolume.sharedProfile : null;
+			if (legacyProfile == null)
+				return false;
+
+			var postExposure = 0.0f;
+			if (legacyProfile.TryGetSettings<UnityEngine.Rendering.PostProcessing.AutoExposure>(out var autoExposure) &&
+				autoExposure != null && autoExposure.active)
+				postExposure = autoExposure.maxLuminance.value;
+
+			var bloomScale = 0.0f;
+			var bloomThreshold = BloomThreshold;
+			if (legacyProfile.TryGetSettings<UnityEngine.Rendering.PostProcessing.Bloom>(out var legacyBloom) &&
+				legacyBloom != null && legacyBloom.active)
+			{
+				bloomScale = legacyBloom.intensity.value;
+				bloomThreshold = legacyBloom.threshold.value;
+			}
+
+			var destinationPath = PackagePath.GetOutputPath($"postprocessing/{mapName}_URP.asset");
+			var profile = UnityAssets.Load<VolumeProfile>(destinationPath);
+			if (profile == null)
+			{
+				profile = ScriptableObject.CreateInstance<VolumeProfile>();
+				UnityAssets.Save(profile, destinationPath);
+			}
+
+			GetOrAdd<ColorAdjustments>(profile).postExposure.Override(postExposure);
+			var exposure = Mathf.Pow(2, postExposure);
+			var bloom = GetOrAdd<Bloom>(profile);
+			bloom.threshold.Override(Mathf.LinearToGammaSpace(
+				Mathf.GammaToLinearSpace(bloomThreshold) / Mathf.Max(exposure, 0.0001f)));
+			bloom.intensity.Override(BloomIntensityPerScale * bloomScale);
+			GetOrAdd<Tonemapping>(profile).mode.Override(TonemappingMode.None);
+
+			var colorLookup = GetOrAdd<ColorLookup>(profile);
+			// PPv2's external Texture3D is in its internal grading space, not the strip-LUT space URP
+			// consumes. Copying it directly crushes dark and middle values. A fresh VMF conversion uses
+			// BuildLookupTexture and retains the original Source .raw lookup; without the VMF, leaving the
+			// old lookup out is the only faithful fallback.
+			// Keep a Source strip that may already have been rebuilt into this URP profile separately.
+			if (colorLookup.texture.value == null)
+			{
+				colorLookup.texture.Override(null);
+				colorLookup.contribution.Override(0);
+			}
+
+			EditorUtility.SetDirty(profile);
+			AssetDatabase.SaveAssets();
+			var volume = GetOrCreateVolume(parent, profile);
+			RenderPostProcessingOnCameras(volume.gameObject.scene, volume.gameObject.layer);
+			Debug.Log($"{mapName} legacy post processing migrated to URP: exposure {exposure}, bloom {bloomScale}. " +
+					  "The PPv2-baked color LUT was omitted; re-import from the VMF to rebuild it from Source data.");
+			return true;
+		}
+#endif
+
 		static VolumeProfile GetOrCreateProfile(string mapName)
 		{
 			var destinationPath = PackagePath.GetOutputPath($"postprocessing/{mapName}.asset");
