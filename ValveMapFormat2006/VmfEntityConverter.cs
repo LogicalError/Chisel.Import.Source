@@ -468,7 +468,17 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                         {
                             // The skin picks the model's material set: lights_florescent01a is off in skin 0
                             // and on in skin 1. A missing key is skin 0, as in the game.
-                            var prefab = gameResources.ImportModel(model, skin: entity.GetInteger("skin"));
+							GameObject prefab;
+							try
+							{
+								prefab = gameResources.ImportModel(model, skin: entity.GetInteger("skin"));
+							}
+							catch (Exception exception)
+							{
+								Debug.LogError($"[ENTITY] Failed to import model {model} for {entity.ClassName} " +
+											   $"(entity {entity.Id}); skipping this entity.\n{exception}");
+								break;
+							}
                             if (prefab == null)
                             {
                                 Debug.LogError($"Can't find model {model}");
