@@ -472,8 +472,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						ChiselBrushComponent go = CreateBrush(gameResources, brushModels, model, entity, solid, role, roleName);
 
 						// Hidden in Hammer means the map compiler skips it too (vbsp has no handler for
-						// the `hidden` block either), so it is imported but left inactive.
-						if (solid.IsHidden) go.gameObject.SetActive(false);
+						// the `hidden` block either), so it is imported but left inactive. A shared
+						// func_detail model cannot carry this state for the whole entity, so keep it on
+						// each imported brush.
+						if (solid.IsHidden || entity.IsHidden) go.gameObject.SetActive(false);
 						go.surfaceArray = new ChiselSurfaceArray();
 						go.surfaceArray.EnsureSize(planes.Length);
 

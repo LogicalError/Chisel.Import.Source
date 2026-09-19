@@ -110,11 +110,12 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             "func_combine_ball_spawner",
         };
 
-        // Brush entities whose brushes vbsp moves into the world (LoadEntityCallback). Every other brush entity is compiled
-        // from its own brushes alone (ProcessSubModel), so it neither cuts the world nor is cut by it.
+        // Brush entities whose brushes vbsp moves into the structural world. Every other brush entity is compiled
+        // separately, so it does not cut structural world faces. In particular, func_detail is detail geometry:
+        // vbsp clips it against the world after the world CSG pass, but it must not carve the world itself.
         static readonly HashSet<string> kWorldClasses = new(StringComparer.OrdinalIgnoreCase)
         {
-            "func_detail", "func_ladder",
+            "func_ladder",
         };
 
         const SourceSurfaceFlags kNotDrawn = SourceSurfaceFlags.NoDraw | SourceSurfaceFlags.Hint | SourceSurfaceFlags.Skip | SourceSurfaceFlags.Trigger;

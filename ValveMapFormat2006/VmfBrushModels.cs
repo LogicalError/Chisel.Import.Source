@@ -55,6 +55,12 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     return SharedModel(kToolsGroup, name, render: true, collide: false);
                 case VmfBrushRole.Entity:
                 {
+                    // Source compiles func_detail after structural world CSG. Keep all detail brushes in one
+                    // render/collision model so they can be batched and combined with one another, without letting
+                    // them carve holes out of the world model.
+                    if (string.Equals(entity?.ClassName, "func_detail", System.StringComparison.OrdinalIgnoreCase))
+                        return SharedModel("Brush Entities", "Details", render: true, collide: true);
+
                     var state = VmfBrushContents.EntityState(entity);
                     var model = SharedModel("Brush Entities", EntityName(entity), state.render, state.collide, !state.active);
                     (model.renderSettings.castShadows, model.renderSettings.receiveShadows) = VmfBrushContents.EntityShadows(entity);
