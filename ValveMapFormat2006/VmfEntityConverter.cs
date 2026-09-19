@@ -344,6 +344,37 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						break;
 					}
 
+					// Dust: particles that appear inside the entity's brushes and drift (VmfDustMotes). The brushes
+					// themselves draw nothing, as in the game.
+					case "func_dustmotes":
+					case "func_dustcloud":
+					{
+						var brushes = new List<VmfDustMotes.HalfSpace[]>();
+						foreach (var solid in entity.Solids)
+						{
+							var halfSpaces = VmfDustMotes.HalfSpaces(solid);
+							if (halfSpaces != null)
+								brushes.Add(halfSpaces);
+						}
+						var dustShader = FindEffectShader(ref dustMotesShader, kDustMotesShaderName);
+						if (dustShader == null || !VmfDustMotes.Bounds(brushes, out var min, out var max))
+							break;
+
+						var settings = VmfDustMotes.Read(entity);
+						var origin = SourceEngineUnits.Swizzle((min + max) * 0.5f) * SourceEngineUnits.VmfInvMeters;
+						var mesh = VmfDustMotes.GetSpawnMesh(brushes, min, max, settings, origin, out var spawnChance);
+						var material = VmfEffectAssets.GetBaseMaterial(kDustMotesMaterialName, GetEffectTexture(gameResources, kDustMotesMaterialName),
+																	   dustShader, "dust");
+
+						GameObject go = new GameObject(entity.ClassName == "func_dustcloud" ? "Dust Cloud" : "Dust Motes");
+						go.SetActive(false);
+						go.transform.parent = GetEffectsGroupOrCreate(parent, "Dust");
+						go.transform.position = origin;
+						VmfDustMotes.Configure(go.AddComponent<ParticleSystem>(), settings, mesh, spawnChance, material);
+						go.SetActive(!entity.IsHidden);
+						break;
+					}
+
 					default:
 					{
 						// NPCs, items and weapons carry no "model" key - in Source the model comes
@@ -1030,6 +1061,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		private const string kLightGlowShaderName     = "Chisel/Import/LightGlow";
 		private const string kSpotlightBeamShaderName = "Chisel/Import/SpotlightBeam";
 		private const string kLensFlareShaderName     = "Chisel/Import/LensFlare";
+		private const string kDustMotesShaderName     = "Chisel/Import/DustMotes";
+
+		/// <summary>The material C_Func_Dust draws its particles with</summary>
+		private const string kDustMotesMaterialName = "particle/sparkles";
 
 		/// <summary>How far CPointSpotlight's halo reaches either side of the lamp, in Source units.</summary>
 		private const float kSpotlightHaloScale = 60.0f;
@@ -1046,6 +1081,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		private static Shader lightGlowShader;
 		private static Shader spotlightBeamShader;
 		private static Shader lensFlareShader;
+		private static Shader dustMotesShader;
 		private static Mesh billboardQuad;
 		private static Mesh beamStrip;
 		private static readonly Dictionary<string, Texture2D> effectTextures = new();

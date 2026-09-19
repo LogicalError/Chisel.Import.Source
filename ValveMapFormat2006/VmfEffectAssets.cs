@@ -22,7 +22,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 	internal static class VmfEffectAssets
 	{
 		/// <summary>Bump when what these assets are built with changes.</summary>
-		public static readonly (string generator, int version) GeneratedVersion = ("effect-asset", 1);
+		/// <remarks>2: the dust spawn meshes are triangles (a ParticleSystem's shape module takes no points).</remarks>
+		public static readonly (string generator, int version) GeneratedVersion = ("effect-asset", 2);
 
 		/// <summary>
 		/// The base material that draws an effect's texture with the shader: "materials/&lt;material&gt; (&lt;purpose&gt;).mat"
@@ -110,6 +111,17 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			{
 				UnityEngine.Object.DestroyImmediate(probe);
 			}
+		}
+
+		/// <summary>
+		/// A name for an asset made from <paramref name="key"/>, which spells out everything it is made from: the same key
+		/// always gives the same name, and a different one practically never does. The first 16 hex digits of its SHA-1.
+		/// </summary>
+		public static string ContentName(string key)
+		{
+			using var sha = System.Security.Cryptography.SHA1.Create();
+			return BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(key)))
+							   .Replace("-", "").Substring(0, 16).ToLowerInvariant();
 		}
 
 		/// <summary>A mesh at effects/&lt;name&gt;.asset in the import folder.</summary>

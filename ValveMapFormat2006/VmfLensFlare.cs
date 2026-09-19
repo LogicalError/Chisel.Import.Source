@@ -201,10 +201,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				key.Append(FormattableString.Invariant(
 					$"{element.Intensity.x:R} {element.Intensity.y:R} {element.Intensity.z:R} {element.Sizes.x:R} {element.Sizes.y:R} {element.Sizes.z:R} {element.Color.r} {element.Color.g} {element.Color.b}"));
 			}
-			using var sha = System.Security.Cryptography.SHA1.Create();
-			var hash = System.BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(key.ToString())))
-								.Replace("-", "").Substring(0, 16).ToLowerInvariant();
-			return VmfEffectAssets.GetMesh($"lens flares/{hash}", () => BuildMesh(elements, attenuation, proxyRadius, style, sunFlare));
+			return VmfEffectAssets.GetMesh($"lens flares/{VmfEffectAssets.ContentName(key.ToString())}",
+										   () => BuildMesh(elements, attenuation, proxyRadius, style, sunFlare));
 		}
 
 		/// <summary>
