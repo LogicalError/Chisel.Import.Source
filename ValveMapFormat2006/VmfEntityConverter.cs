@@ -85,49 +85,12 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     case "keyframe_rope":
                         break;
 
-                    // The map's sun and outdoor ambient light. Source treats pitch as a separate
-                    // override for the first component of angles; negative pitch points the rays
-                    // down into the level. SourceEntity.Light performs that direction conversion.
+                    // Lights, as ImportLight makes them (and ReimportLights makes them again)
                     case "light_environment":
-                    {
-                        var go = new GameObject("Environment Light");
-                        go.SetActive(false);
-                        go.transform.parent = GetLightingGroupOrCreate(parent);
-
-                        var light = go.AddComponent<Light>();
-                        light.type = LightType.Directional;
-#if UNITY_EDITOR
-                        light.lightmapBakeType = LightmapBakeType.Mixed;
-#endif
-                        light.shadows = entity.GetFloat("SunSpreadAngle") > 0 ? LightShadows.Soft : LightShadows.Hard;
-                        if (!TryGetEffectiveLight(entity, out var environmentLight))
-                            environmentLight = new VmfVector4(255, 255, 255, 400);
-                        ConvertEnvironmentLightColor(environmentLight, out var lightColor, out var lightIntensity);
-                        light.color = lightColor;
-                        light.intensity = lightIntensity;
-
-                        if (!entity.TryGetProperty("angles", out VmfVector3 angles))
-                            angles = new VmfVector3(0, 0, 0);
-                        if (entity.TryGetProperty("pitch", out float pitch))
-                            angles.X = pitch;
-                        if (!entity.TryGetProperty("origin", out VmfVector3 position))
-                            position = new VmfVector3(0, 0, 0);
-                        SourceEngineUnits.SetUnityTransformWithValveCoordinates(go.transform,
-                            new Vector3(angles.X, angles.Y, angles.Z),
-                            new Vector3(position.X, position.Y, position.Z), SourceEntity.Light);
-
-                        if (TryGetEffectiveLight(entity, "_ambient", "_ambientHDR", "_AmbientScaleHDR", out var ambient))
-                        {
-                            ConvertEnvironmentAmbientColor(ambient, out var ambientColor);
-                            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
-                            RenderSettings.ambientLight = ambientColor;
-                        }
-
-                        go.SetActive(!entity.IsHidden);
-                        if (!entity.IsHidden)
-                            RenderSettings.sun = light;
+                    case "light":
+                    case "light_spot":
+                        ImportLight(parent, entity);
                         break;
-                    }
 
                     // Decals are imported as data (VmfDecal) and drawn by Chisel decals (VmfChiselDecals). With
                     // the optional decals package installed, infodecal keeps its own case further down.
@@ -143,132 +106,6 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                         chiselDecals.Create(decal);
                         break;
                     }
-
-                    // https://developer.valvesoftware.com/wiki/Light
-                    // light is a point entity available in all Source games. it creates an invisible, static light source that shines in all directions.
-                    case "light":
-                    {
-                        // create a new light object:
-                        GameObject go = new GameObject("Point Light");
-                        go.SetActive(false);
-
-						go.transform.parent = GetLightingGroupOrCreate(parent);
-
-                        // set the object position:
-                        if (TryGetEntityOrigin(entity, out Vector3 origin))
-                            go.transform.position = origin;
-
-                        // add a light component:
-                        Light light = go.AddComponent<Light>();
-                        light.type = LightType.Point;
-#if UNITY_EDITOR
-                        // Source's ordinary point lights are static, but making them bake-only leaves an
-                        // imported map almost black until Unity has produced valid lightmaps. Mixed keeps
-                        // their direct light visible immediately and still lets a bake add the indirect
-                        // contribution, matching the spot-light import below.
-                        light.lightmapBakeType = LightmapBakeType.Mixed;
-#endif
-                        light.range = GetLightRange(entity);
-						light.shadows = LightShadows.Hard;
-
-                        // set the light color:
-                        GetLightColor(entity, out var lightColor, out var lightIntensity);
-                        light.color = lightColor;
-                        light.intensity = lightIntensity;
-
-
-						if (!entity.TryGetProperty("angles", out VmfVector3 angles))
-						{
-							angles = new(0, 0, 0);
-							if (entity.TryGetProperty("angle", out float angle))
-							{
-								if (angle >= 0) angles.Y = angle;
-								else if ((int)angle == -1) angles.X = -90;
-								else angles.X = 90;
-							}
-							if (entity.TryGetProperty("pitch", out float pitch))
-							{
-								angles.X = pitch;
-							}
-						}
-						if (!entity.TryGetProperty("origin", out VmfVector3 position))
-                            position = new(0, 0, 0);
-
-						// set the object position & rotation:
-						SourceEngineUnits.SetUnityTransformWithValveCoordinates(light.transform, new Vector3(angles.X, angles.Y, angles.Z), new Vector3(position.X, position.Y, position.Z), SourceEntity.Light);
-
-						// Hidden in Hammer means hidden from the compiler too, so it is imported but inactive.
-						go.SetActive(!entity.IsHidden);
-						break;
-                    }
-
-                    // https://developer.valvesoftware.com/wiki/Light_spot
-                    // light_spot is a point entity available in all Source games. it is a cone-shaped, invisible light source.
-                    case "light_spot":
-                    {
-                        // create a new light object:
-                        GameObject go = new GameObject("Spot Light");
-						go.SetActive(false);
-
-						go.transform.parent = GetLightingGroupOrCreate(parent);
-
-                        // add a light component:
-                        Light light = go.AddComponent<Light>();
-                        light.type = LightType.Spot;
-#if UNITY_EDITOR
-                        light.lightmapBakeType = LightmapBakeType.Mixed;
-#endif
-                        light.range = GetLightRange(entity);
-						light.shadows = LightShadows.Hard;
-
-						const float maxAngle = 155.0f;
-						// approximate the light cookie cone shape and the spot angle.
-						if (entity.TryGetProperty("_inner_cone", out int inner_cone) && entity.TryGetProperty("_cone", out int cone))
-                        {
-                            float lightInnerCone = Mathf.Min(inner_cone * 2.5f, maxAngle);
-                            float lightCone = Mathf.Min(cone * 2, maxAngle);
-
-                            if (lightInnerCone > lightCone)
-                            {
-                                float t = lightCone;
-                                lightInnerCone = lightCone;
-                                lightCone = t;
-                            }
-
-                            // set the spot angle:
-                            light.spotAngle = Math.Max(5, lightCone);
-							light.innerSpotAngle = Math.Max(5, Math.Min(lightInnerCone, lightCone - 10));
-
-							// generate and set the light cookie:
-							//float coneFactor = Mathf.Max(0, lightInnerCone / lightCone);
-                            //light.cookie = BuildLightCookieTexture(coneFactor);
-                        }
-                        // backup approach for the spot angle.
-                        else if (entity.TryGetProperty("_cone", out int cone2))
-                        {
-                            // set the spot angle:
-                            float lightCone = Mathf.Min(cone2 * 2, maxAngle);
-                            light.spotAngle = Math.Max(5, lightCone);
-							light.innerSpotAngle = Math.Max(5, lightCone - 10);
-						}
-
-                        // set the light color:
-                        GetLightColor(entity, out var lightColor, out var lightIntensity);
-                        light.color = lightColor;
-                        light.intensity = lightIntensity;
-
-                        if (!entity.TryGetProperty("angles", out VmfVector3 angles))
-							angles = new(0, 0, 0);
-
-						if (!entity.TryGetProperty("origin", out VmfVector3 position))
-                            position = new(0, 0, 0);
-
-						// set the object position & rotation:
-						SourceEngineUnits.SetUnityTransformWithValveCoordinates(light.transform,new Vector3(angles.X, angles.Y, angles.Z), new Vector3(position.X, position.Y, position.Z), SourceEntity.Light);
-						// Hidden in Hammer means hidden from the compiler too, so it is imported but inactive.
-						go.SetActive(!entity.IsHidden);
-						break;
-					}
 
 					// https://developer.valvesoftware.com/wiki/Env_sprite
 					// env_sprite is the camera-facing glow quad the maps hang on light fixtures,
@@ -609,6 +446,184 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         /// </summary>
         /// <param name="parent">The parent to create the lighting group under.</param>
         /// <returns>The transform of the lighting group</returns>
+		/// <summary>
+		/// Creates the Unity light of a light, light_spot or light_environment entity under the map's Lighting group.
+		/// </summary>
+		static void ImportLight(Transform parent, VmfEntity entity)
+		{
+			switch (entity.ClassName)
+			{
+            // The map's sun and outdoor ambient light. Source treats pitch as a separate
+            // override for the first component of angles; negative pitch points the rays
+            // down into the level. SourceEntity.Light performs that direction conversion.
+            case "light_environment":
+            {
+                var go = new GameObject("Environment Light");
+                go.SetActive(false);
+                go.transform.parent = GetLightingGroupOrCreate(parent);
+
+                var light = go.AddComponent<Light>();
+                light.type = LightType.Directional;
+#if UNITY_EDITOR
+                light.lightmapBakeType = LightmapBakeType.Mixed;
+#endif
+                light.shadows = entity.GetFloat("SunSpreadAngle") > 0 ? LightShadows.Soft : LightShadows.Hard;
+                // VRAD lights with the sun's brightness as it is: it has no falloff. A missing key is
+                // the FGD's "255 255 255 200".
+                if (!TryGetEffectiveLight(entity, out var environmentLight))
+                    environmentLight = new VmfVector4(255, 255, 255, 200);
+                ConvertLightColor(environmentLight, out var lightColor, out var lightBrightness);
+                light.color = lightColor;
+                light.intensity = lightBrightness;
+
+                if (!entity.TryGetProperty("angles", out VmfVector3 angles))
+                    angles = new VmfVector3(0, 0, 0);
+                if (entity.TryGetProperty("pitch", out float pitch))
+                    angles.X = pitch;
+                if (!entity.TryGetProperty("origin", out VmfVector3 position))
+                    position = new VmfVector3(0, 0, 0);
+                SourceEngineUnits.SetUnityTransformWithValveCoordinates(go.transform,
+                    new Vector3(angles.X, angles.Y, angles.Z),
+                    new Vector3(position.X, position.Y, position.Z), SourceEntity.Light);
+
+                if (TryGetEffectiveLight(entity, "_ambient", "_ambientHDR", "_AmbientScaleHDR", out var ambient))
+                {
+                    ConvertEnvironmentAmbientColor(ambient, out var ambientColor);
+                    RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+                    RenderSettings.ambientLight = ambientColor;
+                }
+
+                go.SetActive(!entity.IsHidden);
+                if (!entity.IsHidden)
+                    RenderSettings.sun = light;
+                break;
+            }
+
+            // https://developer.valvesoftware.com/wiki/Light
+            // light is a point entity available in all Source games. it creates an invisible, static light source that shines in all directions.
+            case "light":
+            {
+                // create a new light object:
+                GameObject go = new GameObject("Point Light");
+                go.SetActive(false);
+
+				go.transform.parent = GetLightingGroupOrCreate(parent);
+
+                // set the object position:
+                if (TryGetEntityOrigin(entity, out Vector3 origin))
+                    go.transform.position = origin;
+
+                // add a light component:
+                Light light = go.AddComponent<Light>();
+                light.type = LightType.Point;
+#if UNITY_EDITOR
+                // Source's ordinary point lights are static, but making them bake-only leaves an
+                // imported map almost black until Unity has produced valid lightmaps. Mixed keeps
+                // their direct light visible immediately and still lets a bake add the indirect
+                // contribution, matching the spot-light import below.
+                light.lightmapBakeType = LightmapBakeType.Mixed;
+#endif
+				light.shadows = LightShadows.Hard;
+				SetLightIntensityAndRange(entity, light);
+
+				if (!entity.TryGetProperty("angles", out VmfVector3 angles))
+				{
+					angles = new(0, 0, 0);
+					if (entity.TryGetProperty("angle", out float angle))
+					{
+						if (angle >= 0) angles.Y = angle;
+						else if ((int)angle == -1) angles.X = -90;
+						else angles.X = 90;
+					}
+					if (entity.TryGetProperty("pitch", out float pitch))
+					{
+						angles.X = pitch;
+					}
+				}
+				if (!entity.TryGetProperty("origin", out VmfVector3 position))
+                    position = new(0, 0, 0);
+
+				// set the object position & rotation:
+				SourceEngineUnits.SetUnityTransformWithValveCoordinates(light.transform, new Vector3(angles.X, angles.Y, angles.Z), new Vector3(position.X, position.Y, position.Z), SourceEntity.Light);
+
+				// Hidden in Hammer means hidden from the compiler too, so it is imported but inactive.
+				go.SetActive(!entity.IsHidden);
+				break;
+            }
+
+            // https://developer.valvesoftware.com/wiki/Light_spot
+            // light_spot is a point entity available in all Source games. it is a cone-shaped, invisible light source.
+            case "light_spot":
+            {
+                // create a new light object:
+                GameObject go = new GameObject("Spot Light");
+				go.SetActive(false);
+
+				go.transform.parent = GetLightingGroupOrCreate(parent);
+
+                // add a light component:
+                Light light = go.AddComponent<Light>();
+                light.type = LightType.Spot;
+#if UNITY_EDITOR
+                light.lightmapBakeType = LightmapBakeType.Mixed;
+#endif
+				light.shadows = LightShadows.Hard;
+				SetLightIntensityAndRange(entity, light);
+
+				// Source's cone, with ParseLightSpot's defaults and limits
+				VmfLightFalloff.SpotAngles(entity.GetFloat("_inner_cone"), entity.GetFloat("_cone"), entity.GetFloat("_exponent"),
+										   out var spotAngle, out var innerSpotAngle, out var isPointLight);
+				if (isPointLight)
+					light.type = LightType.Point;
+				else
+				{
+					light.spotAngle      = spotAngle;
+					light.innerSpotAngle = innerSpotAngle;
+				}
+
+                if (!entity.TryGetProperty("angles", out VmfVector3 angles))
+					angles = new(0, 0, 0);
+
+				if (!entity.TryGetProperty("origin", out VmfVector3 position))
+                    position = new(0, 0, 0);
+
+				// set the object position & rotation:
+				SourceEngineUnits.SetUnityTransformWithValveCoordinates(light.transform,new Vector3(angles.X, angles.Y, angles.Z), new Vector3(position.X, position.Y, position.Z), SourceEntity.Light);
+				// Hidden in Hammer means hidden from the compiler too, so it is imported but inactive.
+				go.SetActive(!entity.IsHidden);
+				break;
+			}
+
+			}
+		}
+
+		/// <summary>
+		/// Replaces the lights of a map imported earlier with lights made from its VMF again, and leaves the rest
+		/// of the map alone: for trying the light conversion on a map without importing all of it again.
+		/// </summary>
+		/// <param name="parent">The map's root.</param>
+		/// <returns>How many lights were replaced.</returns>
+		public static int ReimportLights(Transform parent, VmfWorld world)
+		{
+			// Only the lights: the group holds other things as well
+			var group = GetLightingGroupOrCreate(parent);
+			var removed = 0;
+			for (int i = group.childCount - 1; i >= 0; i--)
+			{
+				var child = group.GetChild(i);
+				if (!child.TryGetComponent<Light>(out _))
+					continue;
+				UnityEngine.Object.DestroyImmediate(child.gameObject);
+				removed++;
+			}
+			foreach (var entity in world.Entities)
+			{
+				if (entity.ClassName is "light" or "light_spot" or "light_environment")
+					ImportLight(parent, entity);
+			}
+			return removed;
+		}
+
         private static Transform GetLightingGroupOrCreate(Transform parent)
         {
             Transform lighting = parent.Find("Lighting");
@@ -1207,47 +1222,26 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		}
 
 		/// <summary>
-		/// The Light.color and Light.intensity that reproduce a light's effective "_light".
+		/// The Light.color and brightness of a light's effective "_light".
 		/// </summary>
 		/// <remarks>
-		/// Unity's built-in lights take a gamma-space color. With
-		/// GraphicsSettings.lightsUseLinearIntensity off - the default, and this project's setting -
-		/// they light with GammaToLinear(color * intensity): halving every Light.color in a map
-		/// scaled the rendered radiance by a median 0.217 per pixel, which is 0.5^2.2. So the key's
-		/// own gamma-space color goes straight across and the brightness goes into the intensity,
-		/// gamma-encoded to match. This used to linearize the color first and let Unity linearize it
-		/// again, so every light came out as color^4.84 - far too dark, and too saturated.
+		/// VRAD lights with pow(color / 255, 2.2) × brightness / 255, where 1 is white. URP's lights take a
+		/// gamma-space color and a linear intensity, so the key's own color goes straight across, and the
+		/// brightness is the intensity: of a directional light as it is, and of a point or spot light at the
+		/// distance its falloff is relative to (<see cref="SetLightIntensityAndRange"/>).
 		/// </remarks>
-		private static void GetLightColor(VmfEntity entity, out Color color, out float intensity)
+		private static void GetLightColor(VmfEntity entity, out Color color, out float brightness)
 		{
 			// Plain white at full brightness for a light that states no color at all.
 			if (!TryGetEffectiveLight(entity, out VmfVector4 light))
 				light = new VmfVector4(255, 255, 255, 255);
-			ConvertLightColor(light, out color, out intensity);
+			ConvertLightColor(light, out color, out brightness);
 		}
 
-		private static void ConvertLightColor(VmfVector4 light, out Color color, out float intensity)
+		private static void ConvertLightColor(VmfVector4 light, out Color color, out float brightness)
 		{
 			color = new Color(Mathf.Max(0, light.X) / 255.0f, Mathf.Max(0, light.Y) / 255.0f, Mathf.Max(0, light.Z) / 255.0f);
-			var brightness = Mathf.Max(0, light.W) / 255.0f;
-			intensity = UnityEngine.Rendering.GraphicsSettings.lightsUseLinearIntensity ? brightness : Mathf.Pow(brightness, 1 / 2.2f);
-			// The intensity slider tops out at 8, and so did the conversion this replaces.
-			intensity = Mathf.Min(8, intensity * 2.5f);
-		}
-
-		/// <summary>
-		/// Converts Source's sunlight and outdoor ambient values without the point-light boost.
-		/// Environment light is global (and is normally baked by VRAD), so treating its fourth
-		/// component like a local light made both the real-time sun and flat ambient several times
-		/// too bright. A brightness of 400 is a common Source daylight baseline and maps cleanly to
-		/// a Unity directional-light intensity of one.
-		/// </summary>
-		private static void ConvertEnvironmentLightColor(VmfVector4 light, out Color color, out float intensity)
-		{
-			color = new Color(Mathf.Max(0, light.X) / 255.0f,
-			                  Mathf.Max(0, light.Y) / 255.0f,
-			                  Mathf.Max(0, light.Z) / 255.0f);
-			intensity = Mathf.Clamp(Mathf.Max(0, light.W) / 400.0f, 0, 8);
+			brightness = Mathf.Max(0, light.W) / 255.0f;
 		}
 
 		/// <summary>
@@ -1267,113 +1261,52 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 		#endregion
 
-		#region Light range
+		#region Light falloff
 
-		// Source's attenuation runs in Source units, Unity's runs in meters, so a light's reach has
-		// to be solved in Source units and only then converted - reusing the brightness as if it
-		// were metric is what made every imported light span the whole map.
-
-		/// <summary>Below this fraction of unit brightness a light no longer shows up.</summary>
+		/// <summary>Linear brightness (1 is white) under which a light no longer shows: where its range ends.</summary>
 		/// <remarks>
-		/// Calibrated against the 3358 campaign lights whose mapper did spell out a reach: their
-		/// median is ~200 units at the median brightness of ~50, so 50/200² = 1/800. VRAD's own
-		/// notion of "zero percent" is the 1/256 point of the falloff curve, which is the same kind
-		/// of threshold, but it is only defined for the lights that carry a fifty/zero percent
-		/// distance pair - this covers the rest.
+		/// URP fades a light out over the last part of its range. A light that reaches further costs more,
+		/// and leaks further where it casts no shadow: past URP's shadow budget (256 shadow slices, six for a
+		/// point light) only the nearest lights keep theirs.
 		/// </remarks>
-		private const float lightCutoff = 1.0f / 800.0f;
+		private const float lightVisibleBrightness = 0.01f;
 
-		/// <summary>
-		/// Range ceiling in Source units. Unity's range is a hard influence radius rather than a
-		/// falloff parameter, so an unbounded one is a straight performance cost.
-		/// </summary>
-		/// <remarks>
-		/// 1024 units (~19.5 m) sits above the 95th percentile of the reaches the campaign's
-		/// mappers wrote by hand. The 159 that go past it are mostly the "no cutoff at all"
-		/// sentinels - 56 lights ask for 32768 units, which is 625 m once converted.
-		/// </remarks>
+		/// <summary>Range ceiling in Source units (~19.5 m): an unbounded range is a straight performance cost.</summary>
 		private const float lightMaxRangeUnits = 1024.0f;
 
-		/// <summary>Range floor in Source units, for degenerate attenuation constants.</summary>
-		/// <remarks>
-		/// Only applied to a solved range. A mapper who writes a 4-unit fade distance - 40 lights
-		/// here do - means that light to be all but off, and raising it would light the map with
-		/// something the compiler never lit it with.
-		/// </remarks>
+		/// <summary>Range floor in Source units.</summary>
 		private const float lightMinRangeUnits = 32.0f;
 
 		/// <summary>
-		/// Works out how far a Hammer light actually reaches, in meters.
+		/// Gives a point or spot light the color, brightness and reach its Source light has as VRAD bakes it
+		/// (<see cref="VmfLightFalloff"/>).
 		/// </summary>
-		/// <remarks>
-		/// A mapper states the reach in one of two keys when they care about it, and otherwise
-		/// leaves it to the attenuation constants. Note that a brighter light is not a
-		/// longer-reaching one as far as the mappers are concerned: over the 2770 campaign lights
-		/// with an explicit reach the rank correlation between brightness and reach is -0.06, and
-		/// the median reach is ~200 units in every brightness bucket. So the keys win where they
-		/// exist, and brightness only decides the fallback.
-		/// </remarks>
-		private static float GetLightRange(VmfEntity entity)
+		private static void SetLightIntensityAndRange(VmfEntity entity, Light light)
 		{
-			// "Fade distance (zero percent)" - where VRAD has faded the light out entirely - and
-			// "Maximum distance", a hard cutoff. Zero means unset for both. When both are given the
-			// hard cutoff caps the falloff curve, so the nearer one is the real reach.
-			var range = float.PositiveInfinity;
-			if (entity.TryGetProperty("_zero_percent_distance", out float zeroPercentDistance) && zeroPercentDistance > 0)
-				range = zeroPercentDistance;
-			if (entity.TryGetProperty("_distance", out float maxDistance) && maxDistance > 0)
-				range = Mathf.Min(range, maxDistance);
-
-			if (float.IsInfinity(range))
+			GetLightColor(entity, out var color, out var brightness);
+			var falloff = VmfLightFalloff.FromKeys(new VmfLightFalloff.Keys
 			{
-				// Otherwise solve Source's own falloff, intensity / (c + l*d + q*d²), for the
-				// distance at which it drops under the cutoff.
-				entity.TryGetProperty("_constant_attn", out float constantAttn);
-				entity.TryGetProperty("_linear_attn", out float linearAttn);
-				entity.TryGetProperty("_quadratic_attn", out float quadraticAttn);
+				FiftyPercentDistance = entity.GetFloat("_fifty_percent_distance"),
+				ZeroPercentDistance  = entity.GetFloat("_zero_percent_distance"),
+				HardFalloff          = entity.GetInteger("_hardfalloff") != 0,
+				ConstantAttn         = entity.GetFloat("_constant_attn"),
+				LinearAttn           = entity.GetFloat("_linear_attn"),
+				QuadraticAttn        = entity.GetFloat("_quadratic_attn"),
+				Distance             = entity.GetFloat("_distance"),
+			});
 
-				constantAttn  = Mathf.Max(0, constantAttn);
-				linearAttn    = Mathf.Max(0, linearAttn);
-				quadraticAttn = Mathf.Max(0, quadraticAttn);
+			// Source's falloff as an inverse square over the distances the light reaches, in units². URP's
+			// intensity is in meters: I / d² at d meters is I · VmfMeters² / d² at d units.
+			var farthest = (falloff.EndFade > falloff.StartFade) ? falloff.EndFade : lightMaxRangeUnits;
+			var strength = falloff.FitInverseSquare(farthest);
+			light.color     = color;
+			light.intensity = brightness * strength * SourceEngineUnits.VmfInvMeters * SourceEngineUnits.VmfInvMeters;
 
-				// VRAD reads "no attenuation named at all" as a constant light, not an
-				// unattenuated one.
-				if (constantAttn < 1e-6f && linearAttn < 1e-6f && quadraticAttn < 1e-6f)
-					constantAttn = 1.0f;
-
-				var c = constantAttn - (GetLightIntensity(entity) / lightCutoff);
-				if (quadraticAttn > 1e-9f)
-				{
-					// q*d² + l*d + c == 0
-					var discriminant = (linearAttn * linearAttn) - (4 * quadraticAttn * c);
-					range = discriminant < 0 ? 0 : (-linearAttn + Mathf.Sqrt(discriminant)) / (2 * quadraticAttn);
-				}
-				else if (linearAttn > 1e-9f)
-					range = -c / linearAttn;
-				else
-					// Constant attenuation never falls off, so there is no distance to solve for.
-					range = lightMaxRangeUnits;
-
-				range = Mathf.Max(range, lightMinRangeUnits);
-			}
-
-			return Mathf.Min(range, lightMaxRangeUnits) * SourceEngineUnits.VmfInvMeters * 2;
-		}
-
-		/// <summary>
-		/// The brightest linear channel of a light's effective "_light" value (see
-		/// <see cref="TryGetEffectiveLight"/>), on the same 0..1-per-channel scale the color
-		/// conversion uses, scaled by the brightness.
-		/// </summary>
-		private static float GetLightIntensity(VmfEntity entity)
-		{
-			// Hammer's own default for the key, for the lights that leave it off - the color path
-			// treats those as plain white too.
-			const float defaultBrightness = 200.0f;
-			if (!TryGetEffectiveLight(entity, out VmfVector4 light))
-				return defaultBrightness;
-			var brightest = Mathf.Max(Mathf.Max(light.X, light.Y), light.Z);
-			return Mathf.Pow(Mathf.Max(0, brightest) / 255.0f, 2.2f) * Mathf.Max(0, light.W);
+			// How far it shows, going by its brightest channel as the renderer sees it
+			var linear = color.linear;
+			var brightest = Mathf.Max(linear.r, Mathf.Max(linear.g, linear.b)) * brightness;
+			var reach = falloff.Reach(brightest, strength, lightVisibleBrightness);
+			light.range = Mathf.Clamp(reach, lightMinRangeUnits, lightMaxRangeUnits) * SourceEngineUnits.VmfInvMeters;
 		}
 
 		#endregion
@@ -1407,40 +1340,6 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                 success = true;
             }
             return success;
-        }
-
-        private static Texture2D BuildLightCookieTexture(float coneFactor)
-        {
-            var width = 64;
-            var height = 64;
-            Texture2D cookieTexture = new Texture2D(width, height, TextureFormat.Alpha8, false);
-            cookieTexture.name = "Light Cookie";
-            Color32[] colors = new Color32[height * width];
-
-            var halfWidth = width / 2.0f;
-            var halfHeight = height / 2.0f;
-            var maxDistance = (halfWidth - 1) * (halfHeight - 1);
-            var minDistance = coneFactor * maxDistance;
-            for (int y = 0, o = 0; y < height; y++)
-            {
-                for (int x = 0; x < width; x++, o++)
-                {
-                    var distancex = (x - halfWidth);
-                    var distancey = (y - halfHeight);
-                    var distanceSqr = Mathf.Min(maxDistance, (distancex * distancex) + (distancey * distancey));
-                    var factor = (distanceSqr - minDistance) / (maxDistance - minDistance);
-                    var factorb = (byte)Mathf.Lerp(255, 0, Mathf.Clamp01(factor));
-                    colors[o].r = 255;
-                    colors[o].g = 255;
-                    colors[o].b = 255;
-                    colors[o].a = factorb;
-                }
-            }
-            cookieTexture.wrapMode = TextureWrapMode.Clamp;
-            cookieTexture.SetPixels32(colors, 0);
-            cookieTexture.Apply();
-
-            return cookieTexture;
         }
 
 #if COM_AETERNUMGAMES_CHISEL_DECALS // optional decals package: https://github.com/Henry00IS/Chisel.Decals

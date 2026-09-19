@@ -265,6 +265,31 @@ namespace AeternumGames.Chisel.Import.Source.Editor
             }
         }
 
+        /// <summary>
+        /// Makes the lights of a map that was imported earlier again from its VMF, without importing the rest again.
+        /// </summary>
+        [MenuItem("Chisel/Source Importer/Reimport Map Lights...")]
+        private static void ReimportMapLights()
+        {
+            string path = EditorUtility.OpenFilePanel("Reimport Source Engine Map Lights", "", "vmf");
+            if (path.Length == 0)
+                return;
+
+            var map = new ValveMapFormat2006.VmfImporter().Import(path);
+            var mapName = Path.GetFileNameWithoutExtension(path);
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            var mapRoot = scene.GetRootGameObjects().FirstOrDefault(root => root.name == "Source Map - " + mapName);
+            if (mapRoot == null)
+            {
+                Debug.LogWarning($"The active scene has no \"Source Map - {mapName}\" to reimport the lights of.");
+                return;
+            }
+
+            var replaced = ValveMapFormat2006.VmfEntityConverter.ReimportLights(mapRoot.transform, map);
+            Debug.Log($"{mapName}: replaced {replaced} lights with lights made from {path}.");
+            UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(scene);
+        }
+
 #if COM_UNITY_RENDER_PIPELINES_UNIVERSAL
         /// <summary>
         /// Gives a map that was imported earlier its post processing, without importing it again.
