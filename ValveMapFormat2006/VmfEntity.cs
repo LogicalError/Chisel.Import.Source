@@ -109,7 +109,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         /// </summary>
         public int GetInteger(string name)
         {
-            if (!Properties.TryGetValue(name, out var value) && value != null)
+            if (!Properties.TryGetValue(name, out var value) || value == null)
                 return 0;
 
             switch (value)
@@ -137,7 +137,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         /// </summary>
         public float GetFloat(string name)
         {
-            if (!Properties.TryGetValue(name, out var value) && value != null)
+            if (!Properties.TryGetValue(name, out var value) || value == null)
                 return 0;
 
             switch (value)
