@@ -68,7 +68,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                 }
 
                 // update the material asset with the texture.
-                material.SetTexture("_MainTex", texture);
+                material.SetTexture("_BaseMap", texture);
                 material.SetFloat("_Glossiness", 0.0f);
 
                 // try finding the normal texture.

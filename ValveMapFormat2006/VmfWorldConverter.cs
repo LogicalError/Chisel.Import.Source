@@ -76,7 +76,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		// materials is shared across tens of thousands of sides. The size cannot change during an
 		// import, so resolve it once per material.
 		const int kDefaultTextureSize = 256;
-		static readonly int kMainTexPropertyID = Shader.PropertyToID("_MainTex");
+		static readonly int kMainTexPropertyID = Shader.PropertyToID("_BaseMap");
 		static readonly Dictionary<Material, Vector2Int> s_TextureSizes = new();
 
 		static void GetTextureSize(Material material, out int width, out int height)
@@ -289,7 +289,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 							DisplacementSurfaces.Add(new DisplacementSide { side = side, surface = surface, descriptionIndex = j });
 							enabled = false;
 
-							//surface = ChiselSurface.Create(ChiselDefaultMaterials.ShadowOnlyMaterial);
+							//surface = ChiselSurface.Create(ChiselDefaultMaterials.ForceShadowOnlySurfacesMaterial);
 						}
 						planeSurfaces[j] = surface;
 					}
@@ -361,7 +361,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 							// build displacement:
 							BuildDisplacementSurface(go, displacement.side, displacement.surface, vertices, plane);
-							surfaceDefinitions.surfaces[displacement.descriptionIndex] = ChiselSurface.Create(ChiselDefaultMaterials.Defaults.shadowOnlySurfacesMaterial);
+							surfaceDefinitions.surfaces[displacement.descriptionIndex] = ChiselSurface.Create(ChiselDefaultMaterials.Defaults.forceShadowOnlySurfacesMaterial);
 
 							break;
 						}
@@ -613,7 +613,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			{
 				case VmfFaceKind.Sky:        return RenderSettings.skybox;
 				case VmfFaceKind.Collision:  return ChiselDefaultMaterials.Defaults.collisionSurfacesMaterial;
-				case VmfFaceKind.ShadowOnly: return ChiselDefaultMaterials.Defaults.shadowOnlySurfacesMaterial;
+				case VmfFaceKind.ShadowOnly: return ChiselDefaultMaterials.Defaults.forceShadowOnlySurfacesMaterial;
 				case VmfFaceKind.Hidden:     return ChiselDefaultMaterials.Defaults.userHiddenSurfacesMaterial;
 				// find the material in the unity project automatically.
 				default:                     return gameResources.ImportVMT(side.Material, brushFace: brushFace);
