@@ -45,7 +45,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			return GetOrBuild(PackagePath.GetAssetPath(fullName).Replace('\\', '/'),
 							  () => new Material(shader) { mainTexture = texture },
 							  existing => existing.shader == shader && existing.mainTexture == texture,
-							  PackagePath.GetOutputPath(fullName));
+							  destinationPath: PackagePath.GetOutputPath(fullName));
 		}
 
 		/// <summary>
@@ -70,14 +70,53 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				var variant = new Material(parent) { parent = parent };
 				configure(variant);
 				return variant;
-			}, existing => existing.parent == parent);
+			}, existing => existing.parent == parent && CarriesSettings(existing, parent, configure),
+			// Copied over an older asset, a variant doesn't bring its overrides along, so they are set on the asset again
+			configure);
+		}
+
+		/// <summary>
+		/// Whether the variant already has what <paramref name="configure"/> gives a copy of its parent: all of the shader's
+		/// values match. A variant made while its parent's shader lacked a property it sets has no override for it, and is
+		/// made again once the parent's shader has the property. The variant is only read: a copy of one whose saved values
+		/// belong to another shader makes Unity complain about every one of them.
+		/// </summary>
+		static bool CarriesSettings(Material variant, Material parent, Action<Material> configure)
+		{
+			if (variant.shader != parent.shader)
+				return false;
+			var probe = new Material(parent);
+			try
+			{
+				configure(probe);
+				var shader = parent.shader;
+				for (int i = 0; i < shader.GetPropertyCount(); i++)
+				{
+					var id = shader.GetPropertyNameId(i);
+					var same = shader.GetPropertyType(i) switch
+					{
+						UnityEngine.Rendering.ShaderPropertyType.Color   => probe.GetColor(id) == variant.GetColor(id),
+						UnityEngine.Rendering.ShaderPropertyType.Vector  => probe.GetVector(id) == variant.GetVector(id),
+						UnityEngine.Rendering.ShaderPropertyType.Texture => probe.GetTexture(id) == variant.GetTexture(id),
+						UnityEngine.Rendering.ShaderPropertyType.Int     => probe.GetInteger(id) == variant.GetInteger(id),
+						_                                                => probe.GetFloat(id) == variant.GetFloat(id)
+					};
+					if (!same)
+						return false;
+				}
+				return true;
+			}
+			finally
+			{
+				UnityEngine.Object.DestroyImmediate(probe);
+			}
 		}
 
 		/// <summary>A mesh at effects/&lt;name&gt;.asset in the import folder.</summary>
 		public static Mesh GetMesh(string name, Func<Mesh> build)
 		{
 			var fullName = $"effects/{name}.asset";
-			return GetOrBuild(PackagePath.GetAssetPath(fullName).Replace('\\', '/'), build, existing => true, PackagePath.GetOutputPath(fullName));
+			return GetOrBuild(PackagePath.GetAssetPath(fullName).Replace('\\', '/'), build, existing => true, destinationPath: PackagePath.GetOutputPath(fullName));
 		}
 
 		static string SiblingPath(string assetPath, string name, string extension)
@@ -87,7 +126,13 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			return Path.Combine(Path.GetDirectoryName(assetPath), name + extension).Replace('\\', '/');
 		}
 
-		static T GetOrBuild<T>(string assetPath, Func<T> build, Func<T, bool> matches, string destinationPath = null) where T : UnityEngine.Object
+		/// <summary>
+		/// The asset at the path, built when it is missing, doesn't match or is older than <see cref="GeneratedVersion"/>.
+		/// An old one is rebuilt in place, so its GUID survives; <paramref name="reapply"/> then runs on it, for what a copy
+		/// doesn't carry.
+		/// </summary>
+		static T GetOrBuild<T>(string assetPath, Func<T> build, Func<T, bool> matches, Action<T> reapply = null, string destinationPath = null)
+			where T : UnityEngine.Object
 		{
 			var existing = AssetDatabase.LoadAssetAtPath<T>(assetPath);
 			if (existing != null && matches(existing) && GeneratedAssetVersion.IsCurrent(assetPath, GeneratedVersion))
@@ -97,9 +142,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			built.name = Path.GetFileNameWithoutExtension(assetPath);
 			if (existing != null)
 			{
-				// In place, so the GUID survives
 				EditorUtility.CopySerialized(built, existing);
 				existing.name = built.name;
+				reapply?.Invoke(existing);
 				EditorUtility.SetDirty(existing);
 				AssetDatabase.SaveAssetIfDirty(existing);
 				UnityEngine.Object.DestroyImmediate(built);
