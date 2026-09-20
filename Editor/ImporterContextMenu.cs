@@ -127,7 +127,10 @@ namespace AeternumGames.Chisel.Import.Source.Editor
 
 					// create chisel model and import all of the brushes.
 					EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Preparing Material Searcher...", 0.0f);
-                    ValveMapFormat2006.VmfWorldConverter.Import(gameResources, ChiselModelManager.Instance.CreateNewModel(go.transform), map);
+                    var worldModel = ChiselModelManager.Instance.CreateNewModel(go.transform);
+                    // The world is what a bake is mostly of
+                    ValveMapFormat2006.VmfProbeVolumes.MarkModelInTheBakedLighting(worldModel.gameObject);
+                    ValveMapFormat2006.VmfWorldConverter.Import(gameResources, worldModel, map);
 
 #if COM_AETERNUMGAMES_CHISEL_DECALS // optional decals package: https://github.com/Henry00IS/Chisel.Decals
                     // rebuild the world as we need the collision mesh for decals.
@@ -181,6 +184,12 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     ChiselNodeHierarchyManager.Rebuild();
                     Debug.Log($"Source map import (activate): {activateSeconds:0.0}s, " +
                               $"(initial CSG rebuild): {activateStopwatch.Elapsed.TotalSeconds:0.0}s");
+
+                    // What a bake needs: a probe volume, a baking set and lighting settings. The bake itself is
+                    // Generate Lighting, which is the user's to press - it takes minutes and wants the map finished.
+                    var probeVolumeChanges = ValveMapFormat2006.VmfProbeVolumes.Setup(go.transform, mapName);
+                    if (probeVolumeChanges != null)
+                        Debug.Log("Source map import (probe volumes): " + probeVolumeChanges);
 
                     if (reflectionProbes != null)
                     {
@@ -252,6 +261,8 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                         instanceObject.transform, angles, origin, SourceEntity.Brush);
 
                     var includedModel = ChiselModelManager.Instance.CreateNewModel(instanceObject.transform);
+                    // An instance's brushes are world geometry that happens to live in another file
+                    ValveMapFormat2006.VmfProbeVolumes.MarkModelInTheBakedLighting(includedModel.gameObject);
                     ValveMapFormat2006.VmfWorldConverter.Import(resources, includedModel, included);
                     ValveMapFormat2006.VmfEntityConverter.Import(resources, instanceObject.transform, included);
                     ImportInstances(resources, instanceObject.transform, instancePath, included, ancestry, depth + 1);

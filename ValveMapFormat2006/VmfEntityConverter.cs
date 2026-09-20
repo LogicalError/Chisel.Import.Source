@@ -590,12 +590,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     new Vector3(angles.X, angles.Y, angles.Z),
                     new Vector3(position.X, position.Y, position.Z), SourceEntity.Light);
 
-                if (TryGetEffectiveLight(entity, "_ambient", "_ambientHDR", "_AmbientScaleHDR", out var ambient))
-                {
-                    ConvertEnvironmentAmbientColor(ambient, out var ambientColor);
-                    RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
-                    RenderSettings.ambientLight = ambientColor;
-                }
+                // VRAD gives a light_environment without _ambient half the sun's intensity (ParseLightEnvironment)
+                if (!TryGetEffectiveLight(entity, "_ambient", "_ambientHDR", "_AmbientScaleHDR", out var ambient))
+                    ambient = new VmfVector4(environmentLight.X, environmentLight.Y, environmentLight.Z, environmentLight.W * 0.5f);
+                RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+                RenderSettings.ambientLight = EnvironmentAmbientLinear(ambient).gamma;
 
                 go.SetActive(!entity.IsHidden);
                 if (!entity.IsHidden)
@@ -1383,13 +1382,24 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// solving lightmaps, including surface orientation and occlusion. Unity flat ambient has none
 		/// of that attenuation, so a direct conversion washes out the entire map.
 		/// </summary>
-		private static void ConvertEnvironmentAmbientColor(VmfVector4 light, out Color color)
+		/// <summary>
+		/// light_environment's sky ambient in linear colour, as VRAD reads it: pow(c / 255, 2.2) * 255, scaled by
+		/// brightness / 255 (LightForString in lightmap.cpp), normalised from VRAD's 0-255 intensities to Unity's 0-1.
+		/// </summary>
+		/// <remarks>
+		/// It is used at full strength because in Source all of its occlusion is geometric: VRAD emits it from the sky
+		/// and gathers it per sample by tracing a hemisphere of rays that have to reach a sky brush
+		/// (GatherSampleAmbientSkySSE, weighted by the fraction of each ray that does), so an interior with no view of
+		/// the sky receives none of it. Unity's flat ambient is the same light with NO occlusion until the scene is
+		/// baked, which is what the probe volumes an import now sets up are for - before a bake it floods interiors,
+		/// after one the probes carry the occlusion Source gets from the ray traces.
+		/// </remarks>
+		public static Color EnvironmentAmbientLinear(VmfVector4 light)
 		{
-			const float realtimeFlatAmbientScale = 0.2f;
-			var intensity = Mathf.Clamp01(Mathf.Max(0, light.W) / 400.0f) * realtimeFlatAmbientScale;
-			color = new Color(Mathf.Max(0, light.X) / 255.0f,
-			                  Mathf.Max(0, light.Y) / 255.0f,
-			                  Mathf.Max(0, light.Z) / 255.0f) * intensity;
+			var scale = Mathf.Max(0, light.W) / 255.0f;
+			return new Color(Mathf.Pow(Mathf.Max(0, light.X) / 255.0f, 2.2f),
+			                 Mathf.Pow(Mathf.Max(0, light.Y) / 255.0f, 2.2f),
+			                 Mathf.Pow(Mathf.Max(0, light.Z) / 255.0f, 2.2f)) * scale;
 		}
 
 		#endregion

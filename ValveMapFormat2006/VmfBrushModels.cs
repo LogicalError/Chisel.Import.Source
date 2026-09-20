@@ -92,11 +92,15 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             model = CreateModel(name, Group(group), render, collide);
 #if UNITY_EDITOR
             UnityEditor.GameObjectUtility.SetStaticEditorFlags(model.gameObject, 
-                //UnityEditor.StaticEditorFlags.ContributeGI | 
 				UnityEditor.StaticEditorFlags.BatchingStatic |
 				UnityEditor.StaticEditorFlags.OccludeeStatic |
 				UnityEditor.StaticEditorFlags.OccluderStatic |
 				UnityEditor.StaticEditorFlags.ReflectionProbeStatic);
+            // Brushes that draw are level geometry and are lit by VRAD in the game, so they take part in the bake
+            // here too. Which of the model's renderers actually do is decided per renderer from the surfaces' flags,
+            // so its shadow-only surfaces still block light and its sky faces still let it through.
+            if (render)
+                VmfProbeVolumes.MarkModelInTheBakedLighting(model.gameObject);
 #endif
 			if (kClipLayers.TryGetValue(name, out var layerName) && layerName != null)
             {
