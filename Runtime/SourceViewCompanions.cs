@@ -91,6 +91,12 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 		void OnBeginContextRendering(ScriptableRenderContext context, List<Camera> cameras)
 		{
+			BeginFrame(cameras);
+		}
+
+		/// <summary>Poses the companions of the game cameras a frame is about to render, and forgets the cameras destroyed since</summary>
+		internal void BeginFrame(List<Camera> cameras)
+		{
 			foreach (var camera in cameras)
 			{
 				if (camera.cameraType != CameraType.Game || !Serves(camera))
@@ -208,6 +214,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		{
 			if (view.target == null)
 				return;
+			// A camera may not render into a texture that is released: a game camera's companion does, from the frame it was posed
+			// for on
+			if (view.companion != null && view.companion.targetTexture == view.target)
+				view.companion.targetTexture = null;
 			view.target.Release();
 			Destroy(view.target);
 			view.target = null;
