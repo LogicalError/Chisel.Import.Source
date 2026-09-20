@@ -107,9 +107,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						sky.scale = (entity.TryGetProperty("scale", out float scale) && scale > 0) ? scale : 16;
 						sky.level = parent;
 						sky.nearClipPlane = 2 * SourceEngineUnits.VmfInvMeters;
-						if (entity.TryGetProperty("use_angles", out int useAngles) && useAngles != 0 &&
-							entity.TryGetProperty("angles", out VmfVector3 skyAngles))
-							sky.turn = SkyTurnOf(skyAngles);
+						// use_angles does NOT turn the sky view, and nothing here should make it: sky3dparams_t gives the client
+						// only scale, origin, area and fog (playernet_vars.h:89), and CSkyCamera reads use_angles for exactly what
+						// CFogController::Activate reads it for - the fog's primary direction, AngleVectors(GetAbsAngles()) negated
+						// (SkyCamera.cpp:49, fogcontroller.cpp:119). a map's angles "0 180 0" mean its fog comes from -x.
+						// TODO: feed the sky's fog when the 3D skybox gets fog; until then the angles are read and ignored.
 						break;
 					}
 
@@ -1443,8 +1445,12 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		#endregion
 
 		/// <summary>
-		/// How Black Mesa's use_angles turns the 3D skybox against the level: the sky_camera's orientation, in Unity's axes
-		/// (Source's x, y, z are Unity's x, z, y). Identity for angles of 0.
+		/// A Source entity's angles as a Unity rotation, relative to the orientation angles of 0 give (Source's x, y, z are
+		/// Unity's x, z, y). Identity for angles of 0.
+		/// <para>
+		/// NOT for turning the 3D skybox: sky3dparams_t has no angles and Source never turns the sky view. sky_camera's
+		/// use_angles is the fog's direction, as env_fog_controller's is (SkyCamera.cpp, fogcontroller.cpp).
+		/// </para>
 		/// </summary>
 		public static Quaternion SkyTurnOf(VmfVector3 angles)
 		{

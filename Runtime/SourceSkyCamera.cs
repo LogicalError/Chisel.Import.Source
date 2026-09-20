@@ -21,9 +21,6 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <summary>sky_camera's scale: the level is this many times the size of the miniature</summary>
 		public float scale = 16;
 
-		/// <summary>How the miniature is turned against the level (Black Mesa's use_angles); identity without</summary>
-		public Quaternion turn = Quaternion.identity;
-
 		/// <summary>Where Source's world origin is: the imported map's root. Without one, the world's origin</summary>
 		public Transform level;
 
@@ -51,13 +48,17 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 		/// <summary>
 		/// Where Source's sky view looks from for an eye (CSkyboxView::DrawInternal): the sky_camera's origin plus the eye's
-		/// position in the level divided by the scale, looking where the eye looks, both turned by use_angles.
+		/// position in the level divided by the scale, looking exactly where the eye looks.
+		/// <para>
+		/// The view is never turned. sky3dparams_t carries only scale, origin, area and fog (playernet_vars.h), and
+		/// sky_camera's use_angles sets the fog's direction, not the view's - see VmfEntityConverter's sky_camera case.
+		/// </para>
 		/// </summary>
 		public static void SkyPose(Vector3 eye, Quaternion eyeRotation, Vector3 levelOrigin, Vector3 skyOrigin, float scale,
-								   Quaternion turn, out Vector3 position, out Quaternion rotation)
+								   out Vector3 position, out Quaternion rotation)
 		{
-			position = skyOrigin + turn * ((eye - levelOrigin) / Mathf.Max(scale, 1e-3f));
-			rotation = turn * eyeRotation;
+			position = skyOrigin + ((eye - levelOrigin) / Mathf.Max(scale, 1e-3f));
+			rotation = eyeRotation;
 		}
 
 		/// <summary>
@@ -74,7 +75,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			if (!isActiveAndEnabled)
 				return false;
 			var eye = camera.transform;
-			SkyPose(eye.position, eye.rotation, level ? level.position : Vector3.zero, transform.position, scale, turn,
+			SkyPose(eye.position, eye.rotation, level ? level.position : Vector3.zero, transform.position, scale,
 					out var position, out var rotation);
 			sky.transform.SetPositionAndRotation(position, rotation);
 			sky.nearClipPlane = nearClipPlane;
