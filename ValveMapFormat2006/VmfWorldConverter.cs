@@ -655,13 +655,34 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		{
 			switch (FaceKind(gameResources, role, side))
 			{
-				case VmfFaceKind.Sky:        return MaterialImporter.SkyFaceMaterialOf(RenderSettings.skybox);
+				case VmfFaceKind.Sky:        return SkyFaceMaterial(RenderSettings.skybox);
 				case VmfFaceKind.Collision:  return ChiselDefaultMaterials.Defaults.collisionSurfacesMaterial;
 				case VmfFaceKind.ShadowOnly: return ChiselDefaultMaterials.Defaults.forceShadowOnlySurfacesMaterial;
 				case VmfFaceKind.Hidden:     return ChiselDefaultMaterials.Defaults.userHiddenSurfacesMaterial;
 				// find the material in the unity project automatically.
 				default:                     return gameResources.ImportVMT(side.Material, brushFace: brushFace);
 			}
+		}
+
+		/// <summary>
+		/// The material sky faces are drawn with, whose surfaces are drawn and collide but cast no shadows. vbsp and VRAD let
+		/// the sky and the sun in through a sky face, and the brushes a level is sealed in are mostly sky faces: one that
+		/// cast shadows would also block the light in a bake (<see cref="SurfaceDestinationFlagsExtensions.Normalize"/>),
+		/// and a sealed level would bake in the dark. A material that has surface parameters already keeps them.
+		/// </summary>
+		public static Material SkyFaceMaterial(Material skybox)
+		{
+			var material = MaterialImporter.SkyFaceMaterialOf(skybox);
+			if (material == null || !UnityEditor.EditorUtility.IsPersistent(material) || material.HasMetadataOfType<ChiselSurfaceMetadata>())
+				return material;
+
+			var metadata = material.AddMetadataOfType<ChiselSurfaceMetadata>();
+			if (metadata == null)
+				return material;
+			metadata.destinationFlags = SurfaceDestinationFlags.Renderable | SurfaceDestinationFlags.Collidable;
+			UnityEditor.EditorUtility.SetDirty(metadata);
+			UnityEditor.AssetDatabase.SaveAssetIfDirty(material);
+			return material;
 		}
 
 		// A world brush goes to the world model, and a brush of an entity vbsp compiles on its own to that entity's

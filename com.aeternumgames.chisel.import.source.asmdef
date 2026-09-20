@@ -3,6 +3,8 @@
     "rootNamespace": "",
     "references": [
         "com.chisel.core",
+        "AssetMetadataRuntime",
+        "AssetMetadataEditor",
         "Unity.Mathematics",
         "com.chisel.unity.components",
         "com.chisel.import.source.vpktools",
