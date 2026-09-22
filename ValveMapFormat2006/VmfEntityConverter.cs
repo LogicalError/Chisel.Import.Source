@@ -861,10 +861,13 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <see cref="VmfRope"/>). The entities name each other through NextKey, which the per-entity loop can't resolve,
 		/// so they get a pass of their own.
 		/// <para>
-		/// The game draws a rope as a strip that turns to face the camera, which is what a LineRenderer is. The texture
-		/// runs along the rope in V there, a fixed step per drawn point. A LineRenderer lays it out along the line in U
-		/// instead, one repeat per segment in RepeatPerSegment mode, times textureScale - so the step goes into
-		/// textureScale, and the Cable shader samples the two coordinates the other way around.
+		/// The game draws a rope as a strip that turns to face the camera, and decides its width in SCREEN space so a
+		/// distant cable holds a line instead of breaking into dots (c_rope.cpp, ShouldUseFakeAA). A LineRenderer
+		/// cannot express that - its width is world-space and baked into quads on the CPU, for one camera - so the
+		/// strip is built by <see cref="VmfRopeMesh"/> with both vertices of a pair on the centre line, and
+		/// Chisel/Source/Cable turns it to face the camera and gives it its width. The texture runs along the rope
+		/// in V, a fixed step per drawn point, which the mesh lays out in U, so the shader samples the two
+		/// coordinates the other way around.
 		/// </para>
 		/// </summary>
 		private static void ImportRopes(GameResources gameResources, Transform parent, VmfWorld world)
@@ -903,23 +906,32 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				ropeObject.SetActive(false);
 				ropeObject.transform.parent = GetRopesGroupOrCreate(parent);
 
-				var lineRenderer = ropeObject.AddComponent<LineRenderer>();
-				lineRenderer.useWorldSpace     = true;
-				lineRenderer.positionCount     = positions.Length;
-				lineRenderer.SetPositions(positions);
-				lineRenderer.widthMultiplier   = settings.Width * SourceEngineUnits.VmfInvMeters;
-				lineRenderer.widthCurve        = AnimationCurve.Constant(0, 1, 1);
-				lineRenderer.alignment         = LineAlignment.View;
-				lineRenderer.textureMode       = LineTextureMode.RepeatPerSegment;
+				// The rope sits at its first point rather than at the origin: a mesh lives in its object's own space,
+				// and a cable a kilometre out would otherwise carry that kilometre in every vertex.
+				ropeObject.transform.position = positions[0];
+				var local = new Vector3[positions.Length];
+				for (int i = 0; i < positions.Length; i++)
+					local[i] = ropeObject.transform.InverseTransformPoint(positions[i]);
+
 				// Negative: textures are imported upside down, and texture coordinates turned with them
 				var textureHeight = RopeTextureHeight(gameResources, settings.Material, textureHeights);
-				lineRenderer.textureScale      = new Vector2(-VmfRope.TextureStep(ropeLength, settings, textureHeight), 1);
-				lineRenderer.generateLightingData = true;
-				lineRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+				var mesh = VmfRopeMesh.Build(local,
+											 settings.Width * SourceEngineUnits.VmfInvMeters * 0.5f,
+											 -VmfRope.TextureStep(ropeLength, settings, textureHeight));
+				if (mesh == null)
+					continue;
+				mesh.name = $"Rope {link.Rope.Id}";
+				ropeObject.AddComponent<MeshFilter>().sharedMesh = mesh;
+
+				var ropeRenderer = ropeObject.AddComponent<MeshRenderer>();
+				ropeRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+				// A rope is drawn at a width that depends on the camera, so there is no one shape for a lightmapper to
+				// bake; Source lights a rope from its nodes rather than from a map anyway
+				ropeRenderer.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.BlendProbes;
 
 				var material = gameResources.ImportVMT(settings.Material);
 				if (material != null)
-					lineRenderer.sharedMaterial = material;
+					ropeRenderer.sharedMaterial = material;
 
 				// Hidden in Hammer means hidden from the compiler too, so it is imported but inactive
 				ropeObject.SetActive(!link.Rope.IsHidden);
