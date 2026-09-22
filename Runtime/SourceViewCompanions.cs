@@ -15,7 +15,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 	/// <list type="bullet">
 	/// <item>A game camera's companion is an ordinary enabled camera with a lower depth, which URP renders first in the same
 	/// frame. It is posed when the frame begins (<see cref="RenderPipelineManager.beginContextRendering"/>), before any camera
-	/// renders; a camera seen for the first time gets its companion from the next frame on.</item>
+	/// renders; a camera seen for the first time gets its companion from the next frame on. This needs a PLAYER LOOP: in the
+	/// editor with nothing playing there isn't one, a Game view repaint draws only the cameras that target the screen, and a
+	/// companion draws into a texture - so in edit mode it renders on request from EditorApplication.update instead.</item>
 	/// <item>A Scene view's companion renders on request just before the Scene view does (SceneView.beforeSceneGui).</item>
 	/// </list>
 	/// </summary>
@@ -28,7 +30,30 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		{
 			public Camera companion;
 			public RenderTexture target;
+			// Where the camera was when this was last rendered, and when. A companion is expensive - it draws the
+			// level a second time - so in edit mode it is redrawn when the view it stands in for has actually moved,
+			// and otherwise only at a slow idle rate, which is what picks up an edit to the level itself.
+			public Matrix4x4 renderedFor = Matrix4x4.zero;
+			public double renderedAt;
 		}
+
+		/// <summary>
+		/// Something renders the companions by itself: the player loop, which draws every enabled camera each frame in
+		/// depth order. In the editor with nothing playing there is no player loop, and a Game view REPAINT is not one -
+		/// it draws the cameras that target the screen, which a companion never does.
+		/// </summary>
+		static bool PlayerLoopRenders
+		{
+#if UNITY_EDITOR
+			get { return Application.isPlaying; }
+#else
+			get { return true; }
+#endif
+		}
+
+		// How long an unmoved view may go without being redrawn in edit mode. Short enough that an edit to the level
+		// shows up as a matter of course, long enough that an idle editor is not drawing the level twice per tick.
+		const double kIdleRedrawSeconds = 0.25;
 
 		readonly string name;
 		readonly PoseCompanion pose;
@@ -50,6 +75,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			RenderPipelineManager.beginContextRendering += OnBeginContextRendering;
 #if UNITY_EDITOR
 			UnityEditor.SceneView.beforeSceneGui += OnBeforeSceneGui;
+			UnityEditor.EditorApplication.update += OnEditorUpdate;
 #endif
 		}
 
@@ -58,6 +84,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			RenderPipelineManager.beginContextRendering -= OnBeginContextRendering;
 #if UNITY_EDITOR
 			UnityEditor.SceneView.beforeSceneGui -= OnBeforeSceneGui;
+			UnityEditor.EditorApplication.update -= OnEditorUpdate;
 #endif
 			foreach (var view in views.Values)
 				Release(view);
@@ -119,6 +146,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				if (camera.cameraType != CameraType.Game || !Serves(camera))
 					continue;
 				var view = ViewOf(camera);
+				if (!PlayerLoopRenders)
+					continue;   // OnEditorUpdate renders this one on request; leave its camera alone
 				view.companion.targetTexture = view.target;
 				view.companion.enabled = pose(camera, view.companion);
 			}
@@ -143,10 +172,35 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			if (!RenderPipeline.SupportsRenderRequest(view.companion, request))
 				return null;
 			RenderPipeline.SubmitRenderRequest(view.companion, request);
+			view.renderedFor = camera.transform.localToWorldMatrix;
+			view.renderedAt = Time.realtimeSinceStartupAsDouble;
 			return view.target;
 		}
 
 #if UNITY_EDITOR
+		/// <summary>
+		/// Renders the game cameras' companions in edit mode, where no player loop does. It has to happen here rather
+		/// than in <see cref="OnBeginContextRendering"/> because that is already inside RenderPipeline.Render, and a
+		/// render request there would nest one render inside another - which is the thing companions exist to avoid.
+		/// </summary>
+		void OnEditorUpdate()
+		{
+			if (PlayerLoopRenders)
+				return;
+			var now = Time.realtimeSinceStartupAsDouble;
+			foreach (var camera in Camera.allCameras)
+			{
+				if (camera == null || camera.cameraType != CameraType.Game || !Serves(camera))
+					continue;
+				if (views.TryGetValue(camera, out var view) &&
+					view.renderedFor == camera.transform.localToWorldMatrix &&
+					now - view.renderedAt < kIdleRedrawSeconds)
+					continue;
+				RenderNow(camera);
+			}
+			ForgetDestroyedCameras();
+		}
+
 		void OnBeforeSceneGui(UnityEditor.SceneView sceneView)
 		{
 			if (Event.current == null || Event.current.type != EventType.Repaint)
