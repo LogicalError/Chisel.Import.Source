@@ -72,7 +72,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 		/// <summary>
 		/// The camera is one of THESE views' companions, rather than another kind's. A sky view and a water reflection
-		/// are both companions but want opposite things of a sky face, so the two have to be told apart.
+		/// are both companions, and only the sky view's is drawn with the 3D skybox's own fog, so the two have to be
+		/// told apart (<see cref="SourceSkyCamera.TryGetSkyFog"/>).
 		/// </summary>
 		public bool IsOwnCompanion(Camera camera)
 		{
@@ -166,7 +167,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				data.renderShadows = shadows;
 				data.antialiasing = AntialiasingMode.None;
 				data.requiresColorOption = CameraOverrideOption.Off;
-				data.requiresDepthOption = CameraOverrideOption.Off;
+				// A companion draws a scene, and a scene is fogged by how far away things are (SourceFogFeature), so
+				// it needs its own depth texture. With this off the fog pass has nothing to measure and skips the view
+				// entirely, which does not look like a missing feature: the sky view comes out unfogged and is then
+				// composited into a level that IS fogged, so the vista reads sharp exactly where a sky face shows it.
+				data.requiresDepthOption = CameraOverrideOption.On;
 				view = new View { companion = companion };
 				views.Add(camera, view);
 				companions.Add(companion);

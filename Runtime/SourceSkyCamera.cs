@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -27,11 +28,53 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <summary>The sky view's near plane: Source draws the sky from 2 units out (CSkyboxView::DrawInternal)</summary>
 		public float nearClipPlane = 0.038f;
 
+		/// <summary>
+		/// sky_camera's own fog, which the 3D skybox is drawn with instead of the level's. Its distances are the map's
+		/// fogstart and fogend DIVIDED BY THE SCALE, because the miniature is that many times smaller - Source does the
+		/// division at render time (CSkyboxView::Enable3dSkyboxFog: <c>FogStart(GetSkyboxFogStart() * 1/scale)</c>), and
+		/// the importer does it here so the numbers stored are the ones this view is drawn with. maxDensity is NOT
+		/// scaled. See <see cref="SourceFog"/> for what the numbers mean.
+		/// </summary>
+		[Header("sky_camera's own fog")]
+		public bool  fogEnabled;
+		public Color fogColor          = new Color(0.725f, 0.906f, 1.0f);
+		public Color fogColorSecondary = new Color(0.592f, 0.855f, 1.0f);
+		public bool  fogBlend;
+		public Vector3 fogDirection = Vector3.forward;
+		public float fogStart      = 3.66f;
+		public float fogEnd        = 17.16f;
+		public float fogMaxDensity = 1.0f;
+
+		// Every sky camera in the scene, so the fog pass can ask whether a camera is one of their views
+		static readonly List<SourceSkyCamera> s_All = new List<SourceSkyCamera>();
+
+		/// <summary>
+		/// The fog a camera draws the 3D skybox with, when the camera is a sky view's own companion. False for every
+		/// other camera, which is then fogged with the level's own <see cref="SourceFog"/>.
+		/// </summary>
+		public static bool TryGetSkyFog(Camera camera, out Color color, out Color colorSecondary,
+										out Vector4 parameters, out Vector4 direction)
+		{
+			color = default; colorSecondary = default; parameters = default; direction = default;
+			if (camera == null)
+				return false;
+			foreach (var sky in s_All)
+			{
+				if (sky == null || !sky.isActiveAndEnabled || sky.companions == null || !sky.companions.IsOwnCompanion(camera))
+					continue;
+				if (!sky.fogEnabled)
+					return false;
+				color          = sky.fogColor;
+				colorSecondary = sky.fogColorSecondary;
+				parameters     = new Vector4(sky.fogStart, sky.fogEnd, sky.fogMaxDensity, sky.fogBlend ? 1 : 0);
+				direction      = ((Vector4)sky.fogDirection.normalized);
+				return true;
+			}
+			return false;
+		}
+
 		static readonly int kSkyTextureID = Shader.PropertyToID("_SourceSky3D");
 		static readonly int kSkyEnabledID = Shader.PropertyToID("_SourceSky3DEnabled");
-		// Set while this sky view's own camera renders, so a sky face seals instead of being a backdrop - see the
-		// comment at the top of Chisel/Source/Sky Face.
-		static readonly int kIsSkyViewID  = Shader.PropertyToID("_SourceSkyIsSkyView");
 
 		SourceViewCompanions companions;
 
@@ -39,11 +82,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		{
 			companions = new SourceViewCompanions("3D skybox", Pose, shadows: false);
 			RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
+			if (!s_All.Contains(this))
+				s_All.Add(this);
 		}
 
 		void OnDisable()
 		{
 			RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
+			s_All.Remove(this);
 			companions?.Dispose();
 			companions = null;
 			Shader.SetGlobalFloat(kSkyEnabledID, 0);
@@ -93,9 +139,6 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			if (target != null)
 				Shader.SetGlobalTexture(kSkyTextureID, target);
 			Shader.SetGlobalFloat(kSkyEnabledID, (target != null) ? 1 : 0);
-			// Only this sky view's own cameras seal on sky faces. A water reflection is a companion too and wants the
-			// backdrop, and so does every camera that draws the level.
-			Shader.SetGlobalFloat(kIsSkyViewID, (companions != null && companions.IsOwnCompanion(camera)) ? 1 : 0);
 		}
 	}
 }

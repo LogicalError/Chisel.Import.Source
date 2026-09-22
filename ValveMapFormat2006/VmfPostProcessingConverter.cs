@@ -395,6 +395,19 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			exposure.minimum.Override(spawnSettings.AutoExposureMin);
 			exposure.maximum.Override(spawnSettings.AutoExposureMax);
 
+			// The map's own fog, from the env_fog_controller the game would use. URP's fog has no maximum density,
+			// which is the one number that decides how much of the distance survives, so the importer's feature
+			// renders it (VmfFogControllers, SourceFog).
+			var fogFeatureChanges = VmfFogControllers.EnsureFogFeature();
+			if (fogFeatureChanges != null)
+				Debug.Log("Source map import (post processing): " + fogFeatureChanges);
+			var fogController = VmfFogControllers.Master(world);
+			var fog = VmfFogControllers.Read(fogController);
+			VmfFogControllers.Apply(in fog, GetOrAdd<SourceFog>(profile));
+			if (fogController != null)
+				Debug.Log($"Source map import (fog): {fogController.GetText("targetname")} - " +
+						  (fog.Enabled ? $"{fog.Start:0.#} m to {fog.End:0.#} m, at most {fog.MaxDensity:0.##} dense" : "off"));
+
 			// A fixed exposure from before it
 			if (profile.TryGet(out ColorAdjustments colorAdjustments))
 			{

@@ -111,7 +111,21 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						// only scale, origin, area and fog (playernet_vars.h:89), and CSkyCamera reads use_angles for exactly what
 						// CFogController::Activate reads it for - the fog's primary direction, AngleVectors(GetAbsAngles()) negated
 						// (SkyCamera.cpp:49, fogcontroller.cpp:119). a map's angles "0 180 0" mean its fog comes from -x.
-						// TODO: feed the sky's fog when the 3D skybox gets fog; until then the angles are read and ignored.
+						//
+						// The 3D skybox is fogged with sky_camera's OWN fog, not the level's, and its distances are divided by
+						// the scale because the miniature is that many times smaller (CSkyboxView::Enable3dSkyboxFog). Read
+						// divides them, so what is stored is what this view is drawn with.
+#if COM_UNITY_RENDER_PIPELINES_UNIVERSAL
+						var skyFog = VmfFogControllers.Read(entity, sky.scale);
+						sky.fogEnabled        = skyFog.Enabled;
+						sky.fogColor          = skyFog.Color;
+						sky.fogColorSecondary = skyFog.ColorSecondary;
+						sky.fogBlend          = skyFog.Blend;
+						sky.fogDirection      = skyFog.Direction;
+						sky.fogStart          = skyFog.Start;
+						sky.fogEnd            = skyFog.End;
+						sky.fogMaxDensity     = skyFog.MaxDensity;
+#endif
 						break;
 					}
 
