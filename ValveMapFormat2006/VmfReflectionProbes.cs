@@ -248,18 +248,30 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			return PackagePath.GetAssetPath(fullPath).Replace(System.IO.Path.DirectorySeparatorChar, '/');
 		}
 
+		/// <summary>
+		/// The index's file name, which is also the name the texture itself has to carry.
+		/// </summary>
+		/// <remarks>
+		/// Unity requires an asset's main object to be named after its file: CreateAsset renames it silently on the
+		/// first import, so a descriptive name here was never the one on disk anyway. On every LATER import it was
+		/// worse than cosmetic - CopySerialized copies the name along with the pixels, which renamed the saved asset
+		/// out of agreement with its own file and made SaveAssetIfDirty log "Main Object Name ... does not match
+		/// filename" on every reimport of every map.
+		/// </remarks>
+		const string kIndexAssetName = "reflection_probe_index";
+
 		static Texture3D SaveIndex(ushort[] nearest, Vector3Int cells, string mapName)
 		{
 			var index = new Texture3D(cells.x, cells.y, cells.z, GraphicsFormat.R16_UNorm, TextureCreationFlags.None)
 			{
-				name       = mapName + " reflection probe index",
+				name       = kIndexAssetName,
 				filterMode = FilterMode.Point,
 				wrapMode   = TextureWrapMode.Clamp
 			};
 			index.SetPixelData(nearest, 0);
 			index.Apply(false);
 
-			var destinationPath = PackagePath.GetOutputPath($"maps/{mapName}/reflection_probe_index.asset");
+			var destinationPath = PackagePath.GetOutputPath($"maps/{mapName}/{kIndexAssetName}.asset");
 			var existing = UnityAssets.Load<Texture3D>(destinationPath);
 			if (existing == null)
 			{

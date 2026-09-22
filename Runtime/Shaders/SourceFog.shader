@@ -48,8 +48,18 @@ Shader "Hidden/Chisel/Source/Fog"
                 float2 uv = input.texcoord;
                 half4 scene = SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, uv);
 
-                // A sky face said so
-                if (scene.a < 0.5)
+                // A sky face said so. The test is "is there NO geometry in this pixel", and it is exact rather than a
+                // compromise: a sky face writes alpha exactly 0, and any fragment the alpha test lets through writes
+                // an alpha above 0 - a covered sample cannot contribute 0. So a pixel resolves to 0 only when every
+                // one of its samples is sky. The epsilon is there for the target's 8-bit quantisation and nothing
+                // else, which is why it is small and not 0.5.
+                //
+                // It has to be small. Alpha to coverage makes a cutout fragment export its COVERAGE (URP's AlphaClip
+                // -> SharpenAlphaStrict), so a fence edge resolves to a fraction, and at 0.5 every antialiased edge
+                // pixel against sky would have escaped the fog - a sharp unfogged fringe around exactly the surfaces
+                // the coverage mask was added to smooth. At 0.05 a pixel with any real geometry in it is fogged, and
+                // one that is essentially all sky is not.
+                if (scene.a < 0.05)
                     return half4(scene.rgb, 1);
 
                 float rawDepth = LOAD_TEXTURE2D_X(_SourceFogDepth, uint2(input.positionCS.xy)).r;
