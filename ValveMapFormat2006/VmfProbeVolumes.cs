@@ -181,13 +181,46 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			if (set == null)
 				return false;
 			var serialized = new SerializedObject(set);
+			var changed = false;
+
 			var enableDilation = serialized.FindProperty("settings.dilationSettings.enableDilation");
-			if (enableDilation == null || enableDilation.boolValue)
-				return false;
-			enableDilation.boolValue = true;
-			serialized.ApplyModifiedProperties();
-			return true;
+			if (enableDilation != null && !enableDilation.boolValue)
+			{
+				enableDilation.boolValue = true;
+				changed = true;
+			}
+
+			// How far virtual offset looks for somewhere a probe can see the world from, as a fraction of the brick
+			// size. Unity's 0.2 is 20 cm at the finest spacing - thinner than the walls of any level anyone builds,
+			// so a probe buried in one stays buried. The value has to exceed the level's wall thickness to do
+			// anything at all, which is a property of architecture rather than of a particular map.
+			var search = serialized.FindProperty("settings.virtualOffsetSettings.searchMultiplier");
+			if (search != null && search.floatValue < kSearchMultiplier)
+			{
+				search.floatValue = kSearchMultiplier;
+				changed = true;
+			}
+
+			if (changed)
+				serialized.ApplyModifiedProperties();
+			return changed;
 		}
+
+		/// <summary>
+		/// How far virtual offset searches, as a fraction of the brick size. Measured on a map: 0.2 (Unity's) is
+		/// too short to leave a wall, 0.5 recovers everything recoverable, and 1.0 recovers nothing further - every
+		/// viewpoint identical to 0.5, so the benefit has plateaued well before it. 0.5 is taken rather than 1.0
+		/// because they buy the same thing here and the smaller displacement is the less likely to push a probe
+		/// THROUGH a thin wall into the next room on some other level, which would leak light rather than fix it.
+		/// </summary>
+		/// <remarks>
+		/// The measurement that says these are different questions: with 0.2 the worst-lit viewpoint in the map read
+		/// 0.01288 mean indirect; at 0.5 it read 0.03448, brighter than the map's average, and at 1.0, 0.03410. A
+		/// point sealed inside geometry on all six sides stayed at exactly 0.00000 throughout, which is what says the
+		/// probes left the walls rather than being pushed through them - both would otherwise read as "the enclosed
+		/// areas got brighter".
+		/// </remarks>
+		const float kSearchMultiplier = 0.5f;
 
 		static void EnsureFolderOf(string assetPath)
 		{
