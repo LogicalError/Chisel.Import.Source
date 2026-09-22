@@ -123,8 +123,18 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			foreach (var guid in AssetDatabase.FindAssets("t:ProbeVolumeBakingSet"))
 			{
 				var found = AssetDatabase.LoadAssetAtPath<ProbeVolumeBakingSet>(AssetDatabase.GUIDToAssetPath(guid));
-				if (found != null && found.sceneGUIDs.Contains(sceneGuid))
-					return found;
+				if (found == null || !found.sceneGUIDs.Contains(sceneGuid))
+					continue;
+				// The set that owns this scene is usually not one this importer made: Unity creates one as soon as a
+				// scene has a probe volume. Whoever made it, it is the set this map will be baked into, so it gets
+				// what a level built from solids needs - and the import log says so rather than changing it silently.
+				if (ConfigureForALevelBuiltFromSolids(found))
+				{
+					EditorUtility.SetDirty(found);
+					AssetDatabase.SaveAssetIfDirty(found);
+					note = "dilation switched on for the existing baking set";
+				}
+				return found;
 			}
 
 			var path = PackagePath.GetAssetPath($"maps/{mapName}/{mapName} probe volumes.asset").Replace('\\', '/');
@@ -137,16 +147,16 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				note = "no baking set (the scene would not join one)";
 				return null;
 			}
-			ConfigureForALevelBuiltFromSolids(set);
+			var configured = ConfigureForALevelBuiltFromSolids(set);
 			EditorUtility.SetDirty(set);
 			AssetDatabase.SaveAssetIfDirty(set);
-			note = "a baking set";
+			note = configured ? "a baking set with dilation switched on" : "a baking set";
 			return set;
 		}
 
 		/// <summary>
-		/// Settings a level built from solids needs, on a baking set this importer created. An existing set is left
-		/// alone: it is the user's.
+		/// Gives a baking set what a level built from solids needs. Returns whether it changed anything, so the caller
+		/// can say so; already correct, or no such setting on this Unity version, both return false.
 		/// </summary>
 		/// <remarks>
 		/// A level built from solids has probes sitting inside its walls, and those bake as invalid. Dilation is what
@@ -166,16 +176,17 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// render pipeline's assembly - there is no public API for this.
 		/// </para>
 		/// </remarks>
-		static void ConfigureForALevelBuiltFromSolids(ProbeVolumeBakingSet set)
+		public static bool ConfigureForALevelBuiltFromSolids(ProbeVolumeBakingSet set)
 		{
 			if (set == null)
-				return;
+				return false;
 			var serialized = new SerializedObject(set);
 			var enableDilation = serialized.FindProperty("settings.dilationSettings.enableDilation");
 			if (enableDilation == null || enableDilation.boolValue)
-				return;
+				return false;
 			enableDilation.boolValue = true;
 			serialized.ApplyModifiedProperties();
+			return true;
 		}
 
 		static void EnsureFolderOf(string assetPath)
