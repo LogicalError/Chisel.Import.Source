@@ -70,6 +70,22 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			return camera != null && companions.Contains(camera);
 		}
 
+		/// <summary>
+		/// The camera is one of THESE views' companions, rather than another kind's. A sky view and a water reflection
+		/// are both companions but want opposite things of a sky face, so the two have to be told apart.
+		/// </summary>
+		public bool IsOwnCompanion(Camera camera)
+		{
+			if (camera == null)
+				return false;
+			foreach (var view in views.Values)
+			{
+				if (view.companion == camera)
+					return true;
+			}
+			return false;
+		}
+
 		/// <summary>What the camera's companion rendered for it, or null when it has none yet</summary>
 		public RenderTexture TargetOf(Camera camera)
 		{

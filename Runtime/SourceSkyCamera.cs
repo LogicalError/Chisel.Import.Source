@@ -29,6 +29,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 		static readonly int kSkyTextureID = Shader.PropertyToID("_SourceSky3D");
 		static readonly int kSkyEnabledID = Shader.PropertyToID("_SourceSky3DEnabled");
+		// Set while this sky view's own camera renders, so a sky face seals instead of being a backdrop - see the
+		// comment at the top of Chisel/Source/Sky Face.
+		static readonly int kIsSkyViewID  = Shader.PropertyToID("_SourceSkyIsSkyView");
 
 		SourceViewCompanions companions;
 
@@ -90,6 +93,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			if (target != null)
 				Shader.SetGlobalTexture(kSkyTextureID, target);
 			Shader.SetGlobalFloat(kSkyEnabledID, (target != null) ? 1 : 0);
+			// Only this sky view's own cameras seal on sky faces. A water reflection is a companion too and wants the
+			// backdrop, and so does every camera that draws the level.
+			Shader.SetGlobalFloat(kIsSkyViewID, (companions != null && companions.IsOwnCompanion(camera)) ? 1 : 0);
 		}
 	}
 }
