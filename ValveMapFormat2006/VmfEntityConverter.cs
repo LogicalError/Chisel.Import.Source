@@ -41,6 +41,30 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         private const float lightBrightnessScalar = 0.005f;
 
         /// <summary>
+        /// What an imported light_point or light_spot casts. NOT shadows: their shadowing comes from the
+        /// bake, which is where Source's came from too.
+        /// </summary>
+        /// <remarks>
+        /// These used to import as LightShadows.Hard each, which no map of this size can afford. A Source
+        /// level has hundreds of lights precisely BECAUSE VRAD baked them - the engine cast realtime shadows
+        /// from only a handful. a map has 500: 310 spot lights at one shadow slice each and 190 point
+        /// lights at SIX, for 1450 slices. URP's additional-light atlas is already at 8192, its maximum, and
+        /// cannot hold them, so it downscales and drops shadow maps and says so - three warnings per frame,
+        /// every frame, each one retained by the console with a full stack trace. That is what took the
+        /// editor to 95 GB; the renderer was fine, the log was not.
+        /// <para>
+        /// It stayed hidden while 379 of those 500 lights were demoted to fully baked and cast nothing (see
+        /// VmfProbeVolumes.EnsureLightingSettings for why they were), and appeared the moment they were all
+        /// made live again.
+        /// </para>
+        /// <para>
+        /// The sun keeps its shadows: light_environment is one directional light, it is what actually reads
+        /// as sunlight, and a directional light costs cascades rather than atlas slices.
+        /// </para>
+        /// </remarks>
+        private const LightShadows kImportedLightShadows = LightShadows.None;
+
+        /// <summary>
         /// Imports the entities and attaches them to the specified parent.
         /// </summary>
         /// <param name="parent">The parent to attach entities to.</param>
@@ -640,7 +664,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                 // contribution, matching the spot-light import below.
                 light.lightmapBakeType = LightmapBakeType.Mixed;
 #endif
-				light.shadows = LightShadows.Hard;
+				light.shadows = kImportedLightShadows;
 				SetLightIntensityAndRange(entity, light);
 
 				if (!entity.TryGetProperty("angles", out VmfVector3 angles))
@@ -684,7 +708,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 #if UNITY_EDITOR
                 light.lightmapBakeType = LightmapBakeType.Mixed;
 #endif
-				light.shadows = LightShadows.Hard;
+				light.shadows = kImportedLightShadows;
 				SetLightIntensityAndRange(entity, light);
 
 				// Source's cone, with ParseLightSpot's defaults and limits
