@@ -63,9 +63,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				changes.Add("a global probe volume");
 			}
 
-			var settings = EnsureLightingSettings(mapName);
-			if (settings != null)
-				changes.Add("lighting settings '" + settings.name + "'");
+			EnsureLightingSettings(mapName, out var lightingNote);
+			if (lightingNote != null)
+				changes.Add(lightingNote);
 
 			var set = EnsureBakingSet(mapName, out var bakingSetNote);
 			if (bakingSetNote != null)
@@ -80,28 +80,89 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <summary>
 		/// The scene's lighting settings: baked indirect light, no realtime GI. Mixed lights keep giving their direct
 		/// light in realtime, as Source's do, and the bake adds only what bounces - which is the part a port is
-		/// missing. An imported scene has none, and the getter throws rather than returning null when so.
+		/// missing.
 		/// </summary>
-		static LightingSettings EnsureLightingSettings(string mapName)
+		/// <remarks>
+		/// This used to return the moment the scene already had a LightingSettings asset, on the reasoning that an
+		/// existing one is the user's choice. It is not safe to assume that: Unity assigns a default asset of its own
+		/// the first time anything touches lighting, and the defaults are wrong for this import in two ways that are
+		/// invisible until much later.
+		/// <para>
+		/// bakedGI off means every Mixed light is forced to realtime and nothing bakes at all. And Shadowmask, rather
+		/// than Baked Indirect, is decided per light by FOUR occlusion channels: Unity hands them out and bakes every
+		/// light it cannot fit as FULLY baked, which contributes nothing in realtime. Measured on a map, which kept
+		/// Unity's default asset: of 500 lights, 121 held a channel (36/33/27/25 across channels 0-3) and the other
+		/// 379 were demoted to fully baked - dark, because the lightmap they were supposed to be in is empty. Two
+		/// identical lights a few metres apart ended up on opposite sides of that, and nothing in the Inspector says
+		/// so: it is Light.bakingOutput, which is not a serialized field, which is why duplicating such a light
+		/// produces one that works.
+		/// </para>
+		/// <para>
+		/// So an existing asset is adopted rather than obeyed: the two settings the rest of the import depends on are
+		/// asserted, and what changed is reported. A SHARED asset is replaced rather than edited - the one Unity
+		/// creates lives outside the map's folder and other scenes may be using it, and correcting it in place would
+		/// change them too.
+		/// </para>
+		/// </remarks>
+		/// <param name="note">What this did, for the import log; null when the settings were already right.</param>
+		static LightingSettings EnsureLightingSettings(string mapName, out string note)
 		{
-			LightingSettings settings = null;
-			try { settings = Lightmapping.lightingSettings; } catch (System.Exception) { }
-			if (settings != null)
-				return null;
-
+			note = null;
 			var path = PackagePath.GetAssetPath($"maps/{mapName}/{mapName} lighting.asset").Replace('\\', '/');
-			settings = AssetDatabase.LoadAssetAtPath<LightingSettings>(path);
+
+			LightingSettings current = null;
+			try { current = Lightmapping.lightingSettings; } catch (System.Exception) { }
+
+			var settings = AssetDatabase.LoadAssetAtPath<LightingSettings>(path);
+			var changes = new List<string>();
 			if (settings == null)
 			{
 				settings = new LightingSettings { name = mapName + " lighting" };
-				settings.bakedGI       = true;
-				settings.realtimeGI    = false;
-				settings.mixedBakeMode = MixedLightingMode.IndirectOnly;
-				settings.lightmapper   = LightingSettings.Lightmapper.ProgressiveGPU;
+				// Only on creation: which lightmapper to use is a machine question, not a correctness one, so an
+				// existing asset keeps whatever it was set to.
+				settings.lightmapper = LightingSettings.Lightmapper.ProgressiveGPU;
 				EnsureFolderOf(path);
 				AssetDatabase.CreateAsset(settings, path);
+				changes.Add("created");
 			}
-			Lightmapping.lightingSettings = settings;
+
+			if (!settings.bakedGI)
+			{
+				settings.bakedGI = true;
+				changes.Add("baked GI switched on");
+			}
+			if (settings.realtimeGI)
+			{
+				settings.realtimeGI = false;
+				changes.Add("realtime GI switched off");
+			}
+			if (settings.mixedBakeMode != MixedLightingMode.IndirectOnly)
+			{
+				changes.Add($"mixed lighting {settings.mixedBakeMode} -> Baked Indirect");
+				settings.mixedBakeMode = MixedLightingMode.IndirectOnly;
+			}
+			if (changes.Count > 0)
+			{
+				EditorUtility.SetDirty(settings);
+				AssetDatabase.SaveAssetIfDirty(settings);
+			}
+
+			if (current != settings)
+			{
+				Lightmapping.lightingSettings = settings;
+				changes.Add(current == null ? "assigned to the scene"
+										    : $"assigned to the scene in place of '{current.name}'");
+			}
+
+			if (changes.Count == 0)
+				return settings;
+			note = $"lighting settings '{settings.name}' ({string.Join(", ", changes)})";
+			// Changing the mode invalidates how the last bake classified each light, and a light Unity decided to
+			// bake stays dark until that is cleared. Clearing it here would throw away a good bake on every
+			// re-import, so it is said rather than done.
+			if (changes.Exists(change => change.StartsWith("mixed lighting")))
+				note += "; the previous bake classified lights under the old mode - "
+					  + "clear it with Lighting > Generate Lighting > Clear Baked Data or those lights stay dark";
 			return settings;
 		}
 
