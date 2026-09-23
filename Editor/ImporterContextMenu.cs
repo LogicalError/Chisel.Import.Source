@@ -51,7 +51,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
         /// <summary>
         /// Imports a Valve Map Format (*.vmf) file into the open scene exactly the way the menu does, so a
         /// map can also be imported - or re-imported - from a script. An earlier import of the same map is
-        /// left alone: delete its root first, or the scene ends up holding both.
+        /// removed first (RemovePreviousImport), so importing twice replaces rather than accumulates.
         /// </summary>
         /// <returns>The new map root ("Source Map - " and the file name), or null when no path is given.</returns>
         public static GameObject ImportMap(string path)
@@ -74,6 +74,12 @@ namespace AeternumGames.Chisel.Import.Source.Editor
             {
                 if (!string.IsNullOrEmpty(path))
                 {
+                    // Before anything is parsed or created: see RemovePreviousImport for why it has to be here.
+                    EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Removing the previous import...", 0.0f);
+                    var previousImport = RemovePreviousImport(mapName);
+                    if (previousImport != null)
+                        Debug.Log("Source map import (previous import): " + previousImport);
+
                     EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Parsing Valve Map Format File (*.vmf)...", 0.0f);
                     var importer = new ValveMapFormat2006.VmfImporter();
                     var map = importer.Import(path);
@@ -202,6 +208,49 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                 EditorUtility.ClearProgressBar();
             }
             return go;
+        }
+
+        /// <summary>
+        /// Removes what an earlier import of the same map left behind, out of every loaded scene.
+        /// </summary>
+        /// <remarks>
+        /// This runs BEFORE the VMF is parsed and before a single object is created, because the point is to
+        /// never hold two copies at once. A map the size of a map is hundreds of megabytes of meshes,
+        /// colliders and CSG trees; importing it a second time next to the first one takes the editor to the
+        /// point where it stops responding rather than finishing. The assets have to go with the objects:
+        /// Chisel's generated meshes are DontSave, so nothing reclaims them until they are explicitly
+        /// unloaded, and destroying the hierarchy alone frees almost none of the memory.
+        /// Deliberately not Undo.DestroyObjectImmediate - an undo record keeps the entire copy alive, which
+        /// is exactly the memory this is here to release.
+        /// </remarks>
+        /// <returns>What was removed, or null when no loaded scene held an earlier import of this map.</returns>
+        static string RemovePreviousImport(string mapName)
+        {
+            var rootName = "Source Map - " + mapName;
+            var removed = new List<string>();
+            for (int sceneIndex = 0; sceneIndex < UnityEngine.SceneManagement.SceneManager.sceneCount; sceneIndex++)
+            {
+                var scene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(sceneIndex);
+                if (!scene.isLoaded)
+                    continue;
+                // GetRootGameObjects returns a copy, so destroying while walking it is safe.
+                foreach (var root in scene.GetRootGameObjects())
+                {
+                    if (root.name != rootName)
+                        continue;
+                    removed.Add($"{scene.name}/{root.name} ({root.transform.childCount} children)");
+                    UnityEngine.Object.DestroyImmediate(root);
+                }
+            }
+
+            if (removed.Count == 0)
+                return null;
+
+            var before = UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong();
+            EditorUtility.UnloadUnusedAssetsImmediate();
+            var freed = (before - UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong()) / (1024.0 * 1024.0);
+            return $"removed {removed.Count} earlier import(s) of {mapName} and freed {freed:0} MB: "
+                 + string.Join(", ", removed);
         }
 
         const int kMaxInstanceDepth = 16;
