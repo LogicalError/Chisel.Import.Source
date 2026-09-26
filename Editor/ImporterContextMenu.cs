@@ -40,6 +40,12 @@ namespace AeternumGames.Chisel.Import.Source.Editor
     {
         static GameResources gameResources;
 
+        /// <summary>
+        /// The exception that stopped the last <see cref="ImportMap"/>, or null when it ran to the end. The map it returns
+        /// then holds only what was imported before the exception.
+        /// </summary>
+        public static Exception LastImportException { get; private set; }
+
 		[MenuItem("GameObject/Chisel/Import/Valve Map Format 2006...")]
         private static void ImportValveMapFormat2006()
 		{
@@ -53,9 +59,14 @@ namespace AeternumGames.Chisel.Import.Source.Editor
         /// map can also be imported - or re-imported - from a script. An earlier import of the same map is
         /// removed first (RemovePreviousImport), so importing twice replaces rather than accumulates.
         /// </summary>
-        /// <returns>The new map root ("Source Map - " and the file name), or null when no path is given.</returns>
-        public static GameObject ImportMap(string path)
+        /// <param name="showErrorDialog">Whether an exception during the import is also shown in a modal dialog. A script
+        /// that imports without anyone watching passes false: the dialog would stop the editor until someone clicks it. The
+        /// exception is logged either way, and kept in <see cref="LastImportException"/>.</param>
+        /// <returns>The new map root ("Source Map - " and the file name), or null when no path is given. After an exception
+        /// it is the part that was imported before it: check <see cref="LastImportException"/> before saving it.</returns>
+        public static GameObject ImportMap(string path, bool showErrorDialog = true)
 		{
+            LastImportException = null;
             // TODO: have some way to set this
     	    SourceGameTitle gameTitle = SourceGameTitle.BlackMesa;
 
@@ -164,7 +175,9 @@ namespace AeternumGames.Chisel.Import.Source.Editor
             catch (Exception ex)
             {
                 EditorUtility.ClearProgressBar();
-                EditorUtility.DisplayDialog("Source Engine Map Import", "An exception occurred while importing the map:\r\n" + ex.Message, "Ohno!");
+                LastImportException = ex;
+                if (showErrorDialog)
+                    EditorUtility.DisplayDialog("Source Engine Map Import", "An exception occurred while importing the map:\r\n" + ex.Message, "Ohno!");
                 Debug.LogException(ex);
             }
             finally
