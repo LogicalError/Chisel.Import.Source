@@ -317,6 +317,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					go.definition.BrushOutline = brushMesh;
 
 					var surfaceDefinitions = go.surfaceArray;
+					// The surfaces are indexed by POLYGON from here on, and a brush can come back with more polygons than
+					// it has planes. Writing past the end threw; the brush itself is left
+					// exactly as the factory made it.
+					surfaceDefinitions.EnsureSize(Mathf.Max(planes.Length, brushMesh.polygons.Length));
 					for (int j = 0; j < brushMesh.polygons.Length; j++)
 					{
 						surfaceDefinitions.surfaces[j] = planeSurfaces[brushMesh.polygons[j].descriptionIndex];
@@ -502,6 +506,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						BrushMeshFactory.CreateFromPlanes(planes, new Bounds(Vector3.zero, new Vector3(8192, 8192, 8192)), ref go.surfaceArray, out brushMesh);
 						go.definition.BrushOutline = brushMesh;
 						var surfaceDefinitions = go.surfaceArray;
+						// Indexed by POLYGON below, and a brush can come back with more polygons than it has planes
+						//. Writing past the end threw, and the entity's catch
+						// dropped every solid after it; the brush itself is left exactly as the factory made it.
+						surfaceDefinitions.EnsureSize(Mathf.Max(planes.Length, brushMesh.polygons?.Length ?? 0));
 
 						for (int j = 0; j < brushMesh.polygons.Length; j++)
 						{

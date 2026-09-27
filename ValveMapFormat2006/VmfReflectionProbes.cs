@@ -200,6 +200,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				probes.Add(probe);
 				positions.Add(probeObject.transform.position);
 			}
+			// Every env_cubemap hidden: the compiler leaves
+			// them all out, so the map reflects as one without env_cubemaps. Their probes stay imported, switched off; a
+			// nearest-probe volume with nothing to point at handed every cell probe 0 of none and threw.
+			if (probes.Count == 0)
+				return null;
 			if (probes.Count > SourceReflectionProbes.kMaxProbes)
 				Debug.LogWarning($"{mapName}: {probes.Count} env_cubemaps, of which the Source shaders take {SourceReflectionProbes.kMaxProbes}");
 
