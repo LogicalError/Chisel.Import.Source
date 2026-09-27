@@ -112,7 +112,17 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     Material skybox = null;
                     if (!string.IsNullOrEmpty(map.SkyName))
 					{
-						skybox = MaterialImporter.ImportSkybox(gameResources, map.SkyName);
+						// A sky that cannot be built costs the map its sky, not the whole import: this call used to
+						// throw straight out to the catch below, before a single brush had been imported
+						try
+						{
+							skybox = MaterialImporter.ImportSkybox(gameResources, map.SkyName);
+						}
+						catch (Exception exception)
+						{
+							Debug.LogError("Source map import: the sky '" + map.SkyName + "' could not be imported; the map continues without it.");
+							Debug.LogException(exception);
+						}
 					}
 
                     if (skybox)
