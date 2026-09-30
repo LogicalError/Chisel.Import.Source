@@ -68,26 +68,31 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// Records the brush built for a solid. brushMesh is what <c>CreateFromPlanes</c> made of the solid's side
 		/// planes, in side order; sideDrawn says per side whether Source draws it.
 		/// </summary>
-		public void Add(VmfSolid solid, ChiselBrushComponent brush, BrushMesh brushMesh, bool[] sideDrawn)
+		// outline: the one the CSG derived from the brush's planes (ChiselBrushDefinition.SetPlanes), null when they make none
+		public void Add(VmfSolid solid, ChiselBrushComponent brush, BrushMesh outline, bool[] sideDrawn)
 		{
 			if (solid == null || brush == null)
 				return;
-			solids[solid.Id] = new Entry(brush, SideSurfaces(solid.Sides.Count, brushMesh), sideDrawn);
+			solids[solid.Id] = new Entry(brush, SideSurfaces(solid.Sides.Count, outline), sideDrawn);
 		}
 
-		/// <summary>Per side, the index of the polygon (and so of the brush surface) that shows it, or <see cref="kNoSurface"/>.</summary>
-		public static int[] SideSurfaces(int sideCount, BrushMesh brushMesh)
+		/// <summary>
+		/// Per side of a brush given as its sides' planes, the surface that shows it, or <see cref="kNoSurface"/> when the side
+		/// makes no face. Such a brush has one surface per plane, so a side's surface is its own index, and the derived outline
+		/// has a face for it (descriptionIndex = the plane) only when the side bounds the brush.
+		/// </summary>
+		public static int[] SideSurfaces(int sideCount, BrushMesh outline)
 		{
 			var result = new int[sideCount];
 			for (int i = 0; i < result.Length; i++)
 				result[i] = kNoSurface;
-			if (brushMesh?.polygons == null)
+			if (outline?.polygons == null)
 				return result;
-			for (int p = 0; p < brushMesh.polygons.Length; p++)
+			foreach (var polygon in outline.polygons)
 			{
-				var side = brushMesh.polygons[p].descriptionIndex;
-				if (side >= 0 && side < result.Length && result[side] == kNoSurface)
-					result[side] = p;
+				var side = polygon.descriptionIndex;
+				if (side >= 0 && side < result.Length)
+					result[side] = side;
 			}
 			return result;
 		}

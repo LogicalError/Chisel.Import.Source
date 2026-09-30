@@ -174,6 +174,57 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			return plane;
 		}
 
+		// Source's axes as Unity's, in double: SourceEngineUnits.VmfSwizzle trades y and z
+		static double3 SwizzleD(VmfVector3 input) { return new double3(input.X, input.Z, input.Y); }
+
+		// 1.22 / 64: the scale VmfPointsToUnityPlane has always given a plane's distance, (decimal)VmfInvMeters
+		static readonly double kInvMeters = (double)(decimal)SourceEngineUnits.VmfInvMeters;
+
+		/// <summary>
+		/// The pivot of a brush made from a solid: the average of its sides' plane points, the centre the importer has always
+		/// taken, in Unity units and rounded to float FIRST. That float is what the brush's transform carries, so the planes
+		/// are made local to exactly it (<see cref="LocalPlaneOf"/>) and rounding it cannot move the brush.
+		/// </summary>
+		public static float3 PivotOf(VmfSolid solid)
+		{
+			var sum = double3.zero;
+			foreach (var side in solid.Sides)
+				sum += SwizzleD(side.Plane.P1) + SwizzleD(side.Plane.P2) + SwizzleD(side.Plane.P3);
+			return (float3)(sum / (solid.Sides.Count * 3) * kInvMeters);
+		}
+
+		/// <summary>
+		/// A side's plane in the brush's own space, as the CSG is handed it (ChiselBrushDefinition.SetPlanes): the side's
+		/// three points in Unity units relative to the pivot, the plane computed from them in double, rounded to float
+		/// ONCE. It is the plane <see cref="VmfPointsToUnityPlane"/> makes in world space, oriented the same way (the cross
+		/// product is taken after the swizzle), never a world plane rounded and then shifted. Generators give planes
+		/// : whatever the planes make of the brush is the CSG's to derive, exactly.
+		/// </summary>
+		public static float4 LocalPlaneOf(VmfPlane input, float3 pivot)
+		{
+			var origin = (double3)pivot;
+			var a = SwizzleD(input.P1) * kInvMeters - origin;
+			var b = SwizzleD(input.P2) * kInvMeters - origin;
+			var c = SwizzleD(input.P3) * kInvMeters - origin;
+			var normal = math.normalize(math.cross(b - a, c - a));
+			var sign = SourceEngineUnits.InvertPlanes ? -1.0 : 1.0;
+			return new float4((float3)(normal * sign), (float)(-math.dot(normal, b) * sign));
+		}
+
+		// Gives a brush its sides' planes, local to its pivot, with one surface per plane in side order
+		static float4[] GivePlanes(ChiselBrushComponent brush, VmfSolid solid, float3 pivot, ChiselSurface[] planeSurfaces)
+		{
+			var localPlanes = new float4[solid.Sides.Count];
+			for (int j = 0; j < localPlanes.Length; j++)
+				localPlanes[j] = LocalPlaneOf(solid.Sides[j].Plane, pivot);
+			brush.surfaceArray = new ChiselSurfaceArray();
+			brush.surfaceArray.EnsureSize(localPlanes.Length);
+			for (int j = 0; j < localPlanes.Length; j++)
+				brush.surfaceArray.surfaces[j] = planeSurfaces[j];
+			brush.definition.SetPlanes(localPlanes);
+			return localPlanes;
+		}
+
         /// <summary>
         /// Imports the specified world into the Chisel model.
         /// </summary>
@@ -304,81 +355,53 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 					// TODO: should output all sides that are not displaced, but visible
 					if (!enabled) go.enabled = false;
-					go.surfaceArray = new ChiselSurfaceArray();
-					go.surfaceArray.EnsureSize(planes.Length);
 
-					// cut all the clipping planes out of the brush in one go.
-					BrushMesh brushMesh;
-					BrushMeshFactory.CreateFromPlanes(planes, new Bounds(Vector3.zero, new Vector3(8192, 8192, 8192)), ref go.surfaceArray, out brushMesh);
-					if (brushMesh.polygons == null ||
-						brushMesh.polygons.Length == 0)
-						continue;
-
-					go.definition.BrushOutline = brushMesh;
-
-					var surfaceDefinitions = go.surfaceArray;
-					// The surfaces are indexed by POLYGON from here on, and a brush can come back with more polygons than
-					// it has planes. Writing past the end threw; the brush itself is left
-					// exactly as the factory made it.
-					surfaceDefinitions.EnsureSize(Mathf.Max(planes.Length, brushMesh.polygons.Length));
-					for (int j = 0; j < brushMesh.polygons.Length; j++)
-					{
-						surfaceDefinitions.surfaces[j] = planeSurfaces[brushMesh.polygons[j].descriptionIndex];
-				}
+					// The brush IS its sides' planes, local to its pivot: the CSG derives the outline from them exactly,
+					// one face per plane that bounds it, and the surfaces are one per plane in side order.
+					var pivot = PivotOf(solid);
+					var localPlanes = GivePlanes(go, solid, pivot, planeSurfaces);
 
 					for (int j = solid.Sides.Count; j-- > 0;)
 					{
 						VmfSolidSide side = solid.Sides[j];
 						var surface = planeSurfaces[j];
 
-						// calculate the texture coordinates.
+						// calculate the texture coordinates: against the plane the CSG draws the face with, in the brush's
+						// space; a displacement's mesh is built below in world space, against the world plane
 						GetTextureSize(surface.RenderMaterial, out int w, out int h);
-
-						var clip = new Plane(planes[j].xyz, planes[j].w);
-						CalculateTextureCoordinates(go, unfixedOrigin, surface, clip, w, h, side.UAxis, side.VAxis);
+						if (side.Displacement != null)
+							CalculateTextureCoordinates(go, unfixedOrigin, surface, new Plane(planes[j].xyz, planes[j].w), w, h, side.UAxis, side.VAxis, float3.zero);
+						else
+							CalculateTextureCoordinates(go, unfixedOrigin, surface, new Plane(localPlanes[j].xyz, localPlanes[j].w), w, h, side.UAxis, side.VAxis, pivot);
 					}
 
-					// build displacements.
+					// the outline the CSG derived; null when the planes make no brush (the CSG says why)
+					var outline = go.definition.Validate() ? go.definition.BrushOutline : null;
+
+					// build displacements, in world space while the brush still sits at the origin.
 					foreach (DisplacementSide displacement in DisplacementSurfaces)
 					{
-						// find the brush mesh polygon:
-						for (int polyidx = 0; polyidx < brushMesh.polygons.Length; polyidx++)
+						if (outline?.polygons == null)
+							break;
+						for (int polyidx = 0; polyidx < outline.polygons.Length; polyidx++)
 						{
-							if (brushMesh.polygons[polyidx].descriptionIndex != displacement.descriptionIndex)
+							var polygon = outline.polygons[polyidx];
+							if (polygon.descriptionIndex != displacement.descriptionIndex)
 								continue;
 
-							// find the polygon plane.
-							Plane plane = new(brushMesh.planes[polyidx].xyz, brushMesh.planes[polyidx].w);
-
-							// find all vertices that belong to this polygon:
+							Plane plane = new(planes[displacement.descriptionIndex].xyz, planes[displacement.descriptionIndex].w);
 							List<Vector3> vertices = new();
-							{
-								var polygon = brushMesh.polygons[polyidx];
-								var firstEdge = polygon.firstEdge;
-								var edgeCount = polygon.edgeCount;
-								var lastEdge = firstEdge + edgeCount;
-								for (int e = firstEdge; e < lastEdge; e++)
-								{
-									vertices.Add(brushMesh.vertices[brushMesh.halfEdges[e].vertexIndex]);
-								}
-							}
+							for (int e = polygon.firstEdge; e < polygon.firstEdge + polygon.edgeCount; e++)
+								vertices.Add(outline.vertices[outline.halfEdges[e].vertexIndex] + pivot);
 
-							// build displacement:
 							BuildDisplacementSurface(go, displacement.side, displacement.surface, vertices, plane);
-							surfaceDefinitions.surfaces[displacement.descriptionIndex] = ChiselSurface.Create(ChiselDefaultMaterials.Defaults.forceShadowOnlySurfacesMaterial);
-
+							go.surfaceArray.surfaces[displacement.descriptionIndex] = ChiselSurface.Create(ChiselDefaultMaterials.Defaults.forceShadowOnlySurfacesMaterial);
 							break;
 						}
 					}
 
-					for (int j = 0; j < brushMesh.polygons.Length; j++)
-					{
-						surfaceDefinitions.surfaces[j] = planeSurfaces[brushMesh.polygons[j].descriptionIndex];
-					}
-
-					// finalize the brush by snapping planes and centering the pivot point.
-					go.transform.position += brushMesh.CenterAndSnapPlanes(ref surfaceDefinitions);
-					brushIndex.Add(solid, go, brushMesh, sideDrawn);
+					go.transform.position += (Vector3)pivot;
+					brushIndex.Add(solid, go, outline, sideDrawn);
 
                 foreach (Transform child in go.transform)
                     child.position -= go.transform.position;
@@ -498,39 +521,25 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						// func_detail model cannot carry this state for the whole entity, so keep it on
 						// each imported brush.
 						if (solid.IsHidden || entity.IsHidden) go.gameObject.SetActive(false);
-						go.surfaceArray = new ChiselSurfaceArray();
-						go.surfaceArray.EnsureSize(planes.Length);
 
-						// cut all the clipping planes out of the brush in one go.
-						BrushMesh brushMesh;
-						BrushMeshFactory.CreateFromPlanes(planes, new Bounds(Vector3.zero, new Vector3(8192, 8192, 8192)), ref go.surfaceArray, out brushMesh);
-						go.definition.BrushOutline = brushMesh;
-						var surfaceDefinitions = go.surfaceArray;
-						// Indexed by POLYGON below, and a brush can come back with more polygons than it has planes
-						//. Writing past the end threw, and the entity's catch
-						// dropped every solid after it; the brush itself is left exactly as the factory made it.
-						surfaceDefinitions.EnsureSize(Mathf.Max(planes.Length, brushMesh.polygons?.Length ?? 0));
-
-						for (int j = 0; j < brushMesh.polygons.Length; j++)
-						{
-							surfaceDefinitions.surfaces[j] = planeSurfaces[brushMesh.polygons[j].descriptionIndex];
-					}
+						// The brush IS its sides' planes, local to its pivot (see the world solids above)
+						var pivot = PivotOf(solid);
+						var localPlanes = GivePlanes(go, solid, pivot, planeSurfaces);
 
 					for (int j = solid.Sides.Count; j-- > 0;)
                     {
                         VmfSolidSide side = solid.Sides[j];
 						var surface = planeSurfaces[j];
 
-                        // calculate the texture coordinates.
+                        // calculate the texture coordinates, against the plane the CSG draws the face with
                         GetTextureSize(surface.RenderMaterial, out int w, out int h);
-
-						var clip = new Plane(planes[j].xyz, planes[j].w);
-                        CalculateTextureCoordinates(go, center, surface, clip, w, h, side.UAxis, side.VAxis);
+                        CalculateTextureCoordinates(go, center, surface, new Plane(localPlanes[j].xyz, localPlanes[j].w), w, h, side.UAxis, side.VAxis, pivot);
                     }
 
-                    // finalize the brush by snapping planes and centering the pivot point.
-                    go.transform.position += brushMesh.CenterAndSnapPlanes(ref surfaceDefinitions);
-                    brushIndex.Add(solid, go, brushMesh, sideDrawn);
+                    // the outline the CSG derived; null when the planes make no brush (the CSG says why)
+                    var outline = go.definition.Validate() ? go.definition.BrushOutline : null;
+                    go.transform.position += (Vector3)pivot;
+                    brushIndex.Add(solid, go, outline, sideDrawn);
 
                     // detail brushes that do not affect the CSG world.
                     //if (entity.ClassName == "func_detail")
@@ -576,7 +585,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			return best;
 		}
 
-        private static void CalculateTextureCoordinates(ChiselBrushComponent pr, Vector3 unfixedOrigin, ChiselSurface surface, Plane clip, int textureWidth, int textureHeight, VmfAxis UAxis, VmfAxis VAxis)
+        // clip is the face's plane in the space the texture is expressed in, and pivot where that space's origin is in the
+        // world: Source projects world positions, so each axis's offset takes the pivot along
+        private static void CalculateTextureCoordinates(ChiselBrushComponent pr, Vector3 unfixedOrigin, ChiselSurface surface, Plane clip, int textureWidth, int textureHeight, VmfAxis UAxis, VmfAxis VAxis, float3 pivot)
 		{
 			var localToPlaneSpace = MathExtensions.GenerateLocalToPlaneSpaceMatrix(new float4(clip.normal, clip.distance));
 			var planeSpaceToLocal = math.inverse(localToPlaneSpace);
@@ -604,8 +615,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 			uVector /= SourceEngineUnits.VmfInvMeters;
 			vVector /= SourceEngineUnits.VmfInvMeters;
-			var umatrix = new double4(uVector, uoffset) * uscale;
-			var vmatrix = new double4(vVector, voffset) * vscale;
+			var umatrix = new double4(uVector, uoffset + math.dot((double3)uVector, (double3)pivot)) * uscale;
+			var vmatrix = new double4(vVector, voffset + math.dot((double3)vVector, (double3)pivot)) * vscale;
 		
 
 			var matTex = Matrix4x4.identity;
