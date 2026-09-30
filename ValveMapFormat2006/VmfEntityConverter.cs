@@ -1242,7 +1242,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 			var vmt = gameResources.LoadVMT(materialName);
 			var textureName = (vmt != null && !string.IsNullOrEmpty(vmt.BaseTextureName)) ? vmt.BaseTextureName : materialName;
-			var images = gameResources.ImportVTF(textureName, PackagePath.DefaultMaterialPaths);
+			// Claimed as colour as it is imported, so a texture written now is imported once (MarkAsColor below finds it done)
+			var images = gameResources.ImportVTF(textureName, PackagePath.DefaultMaterialPaths, TextureClaim.AsColor);
 			texture = (images != null && images.Length > 0) ? images[0] : null;
 			if (texture == null)
 				Debug.LogError($"Can't find the texture for {materialName}");
