@@ -194,32 +194,53 @@ namespace AeternumGames.Chisel.Import.Source.Editor
             {
                 if (go != null)
                 {
-                    // The map is kept inactive for the whole import, so this is the first moment
-                    // Chisel sees any of the brushes: activating registers all of them and the
-                    // initial CSG rebuild runs in one lump. None of that is visible to the
-                    // converters' own timings, which is why the import looks like it finishes and
-                    // then the editor sits there. Time it, and keep a progress bar up for it -
-                    // ClearProgressBar used to run first, so this stretch had no bar at all.
-                    EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Activating map...", 0.9f);
+                    // Nothing in here may leave ImportMap. An exception out of a finally is out of the catch above too:
+                    // a map's, from packing its reflection probes inside the bake, went straight to the caller, which
+                    // undid the whole import. What fails here is logged and kept like any other.
                     var activateStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                    go.SetActive(true);
-                    var activateSeconds = activateStopwatch.Elapsed.TotalSeconds;
+                    try
+                    {
+                        // The map is kept inactive for the whole import, so this is the first moment
+                        // Chisel sees any of the brushes: activating registers all of them and the
+                        // initial CSG rebuild runs in one lump. None of that is visible to the
+                        // converters' own timings, which is why the import looks like it finishes and
+                        // then the editor sits there. Time it, and keep a progress bar up for it -
+                        // ClearProgressBar used to run first, so this stretch had no bar at all.
+                        EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Activating map...", 0.9f);
+                        go.SetActive(true);
+                        var activateSeconds = activateStopwatch.Elapsed.TotalSeconds;
 
-                    // Rebuild here rather than leaving it to the next editor update: it has to
-                    // happen either way, and this keeps it inside the progress bar and the timing
-                    // instead of stalling the editor immediately afterwards.
-                    EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Rebuilding the world...", 0.95f);
-                    activateStopwatch.Restart();
-                    ChiselNodeHierarchyManager.Rebuild();
-                    Debug.Log($"Source map import (activate): {activateSeconds:0.0}s, " +
-                              $"(initial CSG rebuild): {activateStopwatch.Elapsed.TotalSeconds:0.0}s");
+                        // Rebuild here rather than leaving it to the next editor update: it has to
+                        // happen either way, and this keeps it inside the progress bar and the timing
+                        // instead of stalling the editor immediately afterwards.
+                        EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Rebuilding the world...", 0.95f);
+                        activateStopwatch.Restart();
+                        ChiselNodeHierarchyManager.Rebuild();
+                        Debug.Log($"Source map import (activate): {activateSeconds:0.0}s, " +
+                                  $"(initial CSG rebuild): {activateStopwatch.Elapsed.TotalSeconds:0.0}s");
+                    }
+                    catch (Exception ex)
+                    {
+                        LastImportException ??= ex;
+                        Debug.LogException(ex);
+                    }
 
                     // What a bake needs: a probe volume, a baking set and lighting settings. The bake itself is
                     // Generate Lighting, which is the user's to press - it takes minutes and wants the map finished.
-                    var probeVolumeChanges = ValveMapFormat2006.VmfProbeVolumes.Setup(go.transform, mapName);
-                    if (probeVolumeChanges != null)
-                        Debug.Log("Source map import (probe volumes): " + probeVolumeChanges);
+                    // One that cannot be set up costs the map its probe volume, not the import (as the sky does).
+                    try
+                    {
+                        var probeVolumeChanges = ValveMapFormat2006.VmfProbeVolumes.Setup(go.transform, mapName);
+                        if (probeVolumeChanges != null)
+                            Debug.Log("Source map import (probe volumes): " + probeVolumeChanges);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError("Source map import: " + mapName + "'s probe volume could not be set up; the map continues without it.");
+                        Debug.LogException(ex);
+                    }
 
+                    // A bake that fails costs the map its reflections, not the import (VmfReflectionProbes.Bake)
                     if (reflectionProbes != null)
                     {
                         EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Baking reflection probes...", 0.97f);

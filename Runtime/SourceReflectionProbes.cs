@@ -113,23 +113,57 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				}
 			}
 
-			packed = new CubemapArray(first.width, probes.Length, first.graphicsFormat, TextureCreationFlags.MipChain, first.mipmapCount)
+			// Unity makes no texture past 2 GB: the probes then stay unpacked, and the shaders reflect nothing
+			var bytes = PackedBytes(first.width, first.graphicsFormat, first.mipmapCount, probes.Length);
+			if (bytes > kMaxPackedBytes)
 			{
-				name       = name + " (packed probes)",
-				hideFlags  = HideFlags.HideAndDontSave,
-				filterMode = FilterMode.Trilinear,
-				wrapMode   = TextureWrapMode.Clamp
-			};
-			var intensities = new float[kMaxProbes];
-			var decode = probes[0].textureHDRDecodeValues;
-			for (int i = 0; i < probes.Length; i++)
-			{
-				for (int face = 0; face < 6; face++)
-					Graphics.CopyTexture(probes[i].texture, face, packed, i * 6 + face);
-				// Each probe's own decode scale, which carries its intensity, relative to the one shared by all
-				intensities[i] = (decode.x != 0) ? probes[i].textureHDRDecodeValues.x / decode.x : 1;
+				Debug.LogError($"{name}: {probes.Length} reflection probes of {first.width}x{first.width} take {bytes / (1 << 20)} MB packed, " +
+							   $"past the {kMaxPackedBytes / (1 << 20)} MB a texture can have; the Source shaders reflect nothing", this);
+				Suspend();
+				return;
 			}
-			SetShaderData(packed, index, volumeMin, cellSize, decode, intensities, available: true);
+
+			// It runs in Unity's own callbacks (a bake's completion, the lighting data changing): whatever goes wrong here
+			// costs the shaders their reflections, and never whoever baked
+			try
+			{
+				packed = new CubemapArray(first.width, probes.Length, first.graphicsFormat, TextureCreationFlags.MipChain, first.mipmapCount)
+				{
+					name       = name + " (packed probes)",
+					hideFlags  = HideFlags.HideAndDontSave,
+					filterMode = FilterMode.Trilinear,
+					wrapMode   = TextureWrapMode.Clamp
+				};
+				var intensities = new float[kMaxProbes];
+				var decode = probes[0].textureHDRDecodeValues;
+				for (int i = 0; i < probes.Length; i++)
+				{
+					for (int face = 0; face < 6; face++)
+						Graphics.CopyTexture(probes[i].texture, face, packed, i * 6 + face);
+					// Each probe's own decode scale, which carries its intensity, relative to the one shared by all
+					intensities[i] = (decode.x != 0) ? probes[i].textureHDRDecodeValues.x / decode.x : 1;
+				}
+				SetShaderData(packed, index, volumeMin, cellSize, decode, intensities, available: true);
+			}
+			catch (System.Exception exception)
+			{
+				Debug.LogError($"{name}: the reflection probes could not be packed; the Source shaders reflect nothing", this);
+				Debug.LogException(exception, this);
+				Release();
+				Suspend();
+			}
+		}
+
+		/// <summary>The most bytes a texture can have in Unity: "only support up to 2GB sizes".</summary>
+		public const long kMaxPackedBytes = int.MaxValue;
+
+		/// <summary>The bytes the probes take packed into one cubemap array: every face of every level of every probe.</summary>
+		public static long PackedBytes(int width, GraphicsFormat format, int mipmapCount, int probeCount)
+		{
+			long bytes = 0;
+			for (int level = 0, size = width; level < Mathf.Max(1, mipmapCount); level++, size = Mathf.Max(1, size / 2))
+				bytes += (long)GraphicsFormatUtility.ComputeMipmapSize(size, size, format);
+			return bytes * 6 * probeCount;
 		}
 
 		/// <summary>Hands the shaders black reflections, as while the probes themselves are being baked.</summary>

@@ -30,10 +30,18 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <summary>How far the volume reaches past the map's brushes, in world units: displacements rise above the brushes they are on</summary>
 		const float kVolumePadding = 4.0f;
 
-		/// <summary>The texels an env_cubemap asks for: "cubemapsize" 0 is the default, n is 2^(n-1)</summary>
+		/// <summary>
+		/// The texels an env_cubemap asks for, as the game reads its "cubemapsize": vbsp stores the value in the BSP as a
+		/// byte (dcubemapsample_t.size is an unsigned char, map.cpp IntForKey), and the engine takes 0 as the default
+		/// (mat_envmaptgasize, "32.0") and n as 1 &lt;&lt; (n - 1) (gl_rmisc.cpp). So "256", which three of a map's
+		/// env_cubemaps carry - a size in texels typed where the exponent goes - is stored as 0 and gets the default. Read
+		/// as an exponent it asked for 2048, and every probe of the map baked at that: 11.5 GB of cubemaps, a packed array
+		/// past Unity's 2 GB, and an import that threw.
+		/// </summary>
 		public static int CubemapResolution(int cubemapSize)
 		{
-			return (cubemapSize <= 0) ? kDefaultSize : 1 << Mathf.Min(cubemapSize - 1, 11);
+			var stored = (byte)cubemapSize;
+			return (stored == 0) ? kDefaultSize : 1 << Mathf.Min(stored - 1, 11);
 		}
 
 		/// <summary>
@@ -297,6 +305,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// the scene has to be saved; an unsaved one gets them from Generate Lighting once it is. While they bake the Source
 		/// surfaces reflect nothing, so no probe bakes in another's reflection from an earlier import.
 		/// </summary>
+		/// <remarks>
+		/// Nothing it runs into may leave it: a bake that fails costs the map its reflections, not the import. It is called
+		/// once the map is built, and an exception out of here - a map's, from packing probes past Unity's 2 GB in the
+		/// bake's completion callback - went straight out of ImportMap, whose caller then undid the whole import.
+		/// </remarks>
 		public static void Bake(SourceReflectionProbes component, string mapName)
 		{
 			if (component == null)
@@ -306,10 +319,19 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				Debug.Log($"{mapName}: the reflection probes are baked with the scene's lighting: save the scene, then Generate Lighting");
 				return;
 			}
-			component.Suspend();
-			if (!Lightmapping.Bake())
-				Debug.LogWarning($"{mapName}: the scene's lighting did not bake, so its reflection probes aren't baked either");
-			component.Apply();
+			try
+			{
+				component.Suspend();
+				if (!Lightmapping.Bake())
+					Debug.LogWarning($"{mapName}: the scene's lighting did not bake, so its reflection probes aren't baked either");
+				component.Apply();
+			}
+			catch (System.Exception exception)
+			{
+				Debug.LogError($"Source map import: {mapName}'s reflection probes could not be baked; the map continues without its reflections.");
+				Debug.LogException(exception);
+				component.Suspend();
+			}
 		}
 	}
 }
