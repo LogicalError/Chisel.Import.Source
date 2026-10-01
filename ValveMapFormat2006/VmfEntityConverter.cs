@@ -87,8 +87,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
             // Built on the first decal that needs it, since only overlays name brush faces.
             VmfDecalConverter.SideIndex decalSides = null;
-            // Draws the decals on the brushes the world import built (VmfBrushIndex)
-            VmfChiselDecals chiselDecals = null;
+            // The decals, drawn after the loop on the brushes the world import built (VmfChiselDecals.CreateAll), so their
+            // materials are written together
+            List<VmfDecal> decals = null;
 
             // iterate through all entities.
             for (int e = 0; e < world.Entities.Count; e++)
@@ -164,9 +165,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     case "info_projecteddecal":
                     {
                         decalSides ??= new VmfDecalConverter.SideIndex(world);
-                        var decal = VmfDecalConverter.Import(parent, entity, decalSides);
-                        chiselDecals ??= new VmfChiselDecals(gameResources, VmfBrushIndex.Of(world));
-                        chiselDecals.Create(decal);
+                        (decals ??= new List<VmfDecal>()).Add(VmfDecalConverter.Import(parent, entity, decalSides));
                         break;
                     }
 
@@ -579,7 +578,15 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				}
             }
 
-            Debug.Log($"Source map import (entities): {entityStopwatch.Elapsed.TotalSeconds:0.0}s for {world.Entities.Count} entities" +
+            // The loop touches no Chisel model or brush, so the decals are drawn as they would have been inside it
+            VmfChiselDecals chiselDecals = null;
+            if (decals != null)
+            {
+                chiselDecals = new VmfChiselDecals(gameResources, VmfBrushIndex.Of(world));
+                chiselDecals.CreateAll(decals);
+            }
+
+            Debug.Log($"Source map import (entities):{entityStopwatch.Elapsed.TotalSeconds:0.0}s for {world.Entities.Count} entities" +
                       ((world.Entities.Count > 0) ? $" ({entityStopwatch.Elapsed.TotalMilliseconds / world.Entities.Count:0.0} ms/entity)" : ""));
             if (chiselDecals != null)
                 Debug.Log(chiselDecals.Report());

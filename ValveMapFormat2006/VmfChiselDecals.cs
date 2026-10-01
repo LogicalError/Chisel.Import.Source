@@ -93,11 +93,75 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			return created - before;
 		}
 
+		/// <summary>
+		/// Makes the Chisel decals for all of a map's imported decals, as <see cref="Create"/> makes them one by one, but with
+		/// their materials written together first (<see cref="GameResources.PrepareMaterials"/>): one refresh between them,
+		/// where each decal asking for its own took one - 58 of a map's first import, its 29 decal materials and
+		/// their textures. Returns how many it made.
+		/// </summary>
+		public int CreateAll(IReadOnlyList<VmfDecal> decals)
+		{
+			if (decals == null || brushes == null)
+				return 0;
+			gameResources.PrepareMaterials(MaterialRequests(decals));
+			var before = created;
+			foreach (var data in decals)
+				Create(data);
+			return created - before;
+		}
+
+		/// <summary>
+		/// The materials <see cref="Create"/> asks for when it makes these decals, as <see cref="GameResources.ImportVMT"/>
+		/// is asked for them: a point decal's always, as it is asked for before its faces are looked for, and an overlay's
+		/// only when the overlay covers a drawn face. One the import would not ask for would be an asset it never made.
+		/// </summary>
+		public List<(string entryName, bool isSprite, bool brushFace)> MaterialRequests(IEnumerable<VmfDecal> decals)
+		{
+			var requests = new List<(string entryName, bool isSprite, bool brushFace)>();
+			if (decals == null || brushes == null)
+				return requests;
+			foreach (var data in decals)
+			{
+				if (data == null || string.IsNullOrEmpty(data.material))
+					continue;
+				switch (data.type)
+				{
+					case VmfDecal.DecalType.InfoOverlay:
+						if (!TryGetOverlayTargets(data, out _, out var targets) || targets.Count == 0)
+							continue;
+						break;
+					case VmfDecal.DecalType.InfoDecal:
+					case VmfDecal.DecalType.InfoProjectedDecal:
+						break;
+					default:
+						continue;
+				}
+				requests.Add((data.material, false, false));
+			}
+			return requests;
+		}
+
 		static double3 ToDouble(Vector3 vector) => new double3(vector.x, vector.y, vector.z);
 
 		#region Overlays
 		void CreateOverlay(VmfDecal data)
 		{
+			if (!TryGetOverlayTargets(data, out var frame, out var targets))
+			{
+				withoutFaces++;
+				return;
+			}
+			if (!frame.isRectangle)
+				notRectangles++;
+			CreateDecals(data, frame, targets);
+		}
+
+		// Where an overlay is placed and the drawn faces it covers of those its sides key lists; false when its corners
+		// make no frame
+		bool TryGetOverlayTargets(VmfDecal data, out VmfDecalPlacement.Frame frame, out List<Face> targets)
+		{
+			frame = default;
+			targets = null;
 			var corners = data.corners;
 			if (corners == null || corners.Length < 4 ||
 				!VmfDecalPlacement.TryGetOverlayFrame(ToDouble(data.basisOrigin), ToDouble(data.basisU), ToDouble(data.basisV),
@@ -105,21 +169,16 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 													  new double2(corners[0].x, corners[0].y), new double2(corners[1].x, corners[1].y),
 													  new double2(corners[2].x, corners[2].y), new double2(corners[3].x, corners[3].y),
 													  new double2(data.textureU.x, data.textureU.y),
-													  new double2(data.textureV.x, data.textureV.y), out var frame))
-			{
-				withoutFaces++;
-				return;
-			}
-			if (!frame.isRectangle)
-				notRectangles++;
+													  new double2(data.textureV.x, data.textureV.y), out frame))
+				return false;
 
-			var targets = new List<Face>();
+			targets = new List<Face>();
 			foreach (var side in data.sides ?? System.Array.Empty<VmfDecal.Side>())
 			{
 				if (TryGetOverlayFace(side.solidId, side.sideIndex, out var face))
 					targets.Add(face);
 			}
-			CreateDecals(data, frame, targets);
+			return true;
 		}
 
 		bool TryGetOverlayFace(int solidId, int sideIndex, out Face face)
