@@ -172,11 +172,11 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     go.SetActive(true);
                     ChiselNodeHierarchyManager.Rebuild();
 #endif
-                    // The materials of every model the entities are imported as, written together (as the world's above)
+                    // Every model the entities are imported as, imported together: their materials, then their files
                     gameResources.PrepareModels(ValveMapFormat2006.VmfEntityConverter.ModelRequests(gameResources, map), (i, count) =>
                     {
-                        if (i % 32 == 0)
-                            EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Importing the models' materials...", (float)i / count);
+                        if (i % 8 == 0)
+                            EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Importing the models...", (float)i / count);
                     });
                     // begin converting hammer entities to unity objects.
                     ValveMapFormat2006.VmfEntityConverter.Import(gameResources, go.transform, map);
