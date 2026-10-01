@@ -1106,6 +1106,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			return size.x > 0 && size.y > 0;
 		}
 
+		/// <summary>Lets go of what the last import cached (ImporterContextMenu.ImportMap, when it ends).</summary>
+		public static void ReleaseImportCaches() => ResetSpriteCaches();
+
 		/// <summary>
 		/// Clears the per-import caches. The effect materials and meshes are assets now (VmfEffectAssets), but one can be
 		/// deleted between imports, so each import looks them up again.

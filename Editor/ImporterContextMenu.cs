@@ -249,9 +249,21 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                         Debug.Log($"Source map import (reflection probes): {activateStopwatch.Elapsed.TotalSeconds:0.0}s");
                     }
                 }
+                ReleaseImportCaches();
                 EditorUtility.ClearProgressBar();
             }
             return go;
+        }
+
+        // What an import cached of the game's materials and textures is that import's own. Kept in statics it stayed
+        // loaded until the domain reloaded, every import adding to it: gameResources held 72, then 272, then 370
+        // materials over one session, and with them their textures (VmfImportCachesTests). The game's
+        // files stay found: gameResources itself is kept.
+        static void ReleaseImportCaches()
+        {
+            gameResources?.ReleaseImportedMaterials();
+            ValveMapFormat2006.VmfWorldConverter.ReleaseImportCaches();
+            ValveMapFormat2006.VmfEntityConverter.ReleaseImportCaches();
         }
 
         /// <summary>

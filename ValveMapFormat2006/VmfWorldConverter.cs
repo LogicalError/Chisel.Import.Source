@@ -79,6 +79,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		static readonly int kMainTexPropertyID = Shader.PropertyToID("_BaseMap");
 		static readonly Dictionary<Material, Vector2Int> s_TextureSizes = new();
 
+		/// <summary>Lets go of the materials the last import looked at (ImporterContextMenu.ImportMap, when it ends).</summary>
+		public static void ReleaseImportCaches() => s_TextureSizes.Clear();
+
 		static void GetTextureSize(Material material, out int width, out int height)
 		{
 			if (material == null)
