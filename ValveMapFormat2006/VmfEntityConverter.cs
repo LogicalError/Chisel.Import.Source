@@ -98,7 +98,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 #endif
                 VmfEntity entity = world.Entities[e];
 
-                switch (entity.ClassName)
+                // Every class with an import of its own is one HasAnImportOfItsOwn names, and every other class reaches the
+                // default: a model, as ModelRequests asks for it before the entities are imported
+                switch (HasAnImportOfItsOwn(entity.ClassName) ? entity.ClassName : null)
                 {
                     // Compile-time include expanded by ImporterContextMenu.ImportInstances.
                     case "func_instance":
@@ -438,12 +440,12 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 					default:
 					{
-						// NPCs, items and weapons carry no "model" key - in Source the model comes
-						// from the entity class - so fall back to the game's own entity
-						// definitions, which is where that mapping actually lives.
-						var fromClassDefinition = false;
-						if (entity.TryGetProperty("model", out string model) ||
-							(fromClassDefinition = TryResolveClassModel(gameResources, entity.ClassName, out model)))
+						if (HasAnImportOfItsOwn(entity.ClassName))
+						{
+							Debug.LogError($"[ENTITY] {entity.ClassName} is named as having an import of its own, and has none here.");
+							break;
+						}
+						if (TryGetModelOf(gameResources, entity, out var model, out var fromClassDefinition))
                         {
                             // The skin picks the model's material set: lights_florescent01a is off in skin 0
                             // and on in skin 1. A missing key is skin 0, as in the game.
@@ -864,6 +866,67 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// definitions are discovered from whichever game is configured.
 		/// </para>
 		/// </summary>
+		/// <summary>
+		/// The classes Import has an import of its own for: everything else is imported as a model, when it has one
+		/// (<see cref="TryGetModelOf"/>). Import's switch dispatches on this, so <see cref="ModelRequests"/> - which asks
+		/// for the models before the entities are imported - and the import cannot disagree about which entities those are.
+		/// </summary>
+		public static bool HasAnImportOfItsOwn(string className)
+		{
+			switch (className)
+			{
+				case "func_instance":
+				case "move_rope":
+				case "keyframe_rope":
+				case "light_environment":
+				case "light":
+				case "light_spot":
+				case "sky_camera":
+				case "infodecal":
+				case "info_overlay":
+				case "info_projecteddecal":
+				case "env_sprite":
+				case "env_lightglow":
+				case "point_spotlight":
+				case "env_lensflare":
+				case "func_dustmotes":
+				case "func_dustcloud":
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		/// <summary>
+		/// The model an entity is imported as: its "model" key, or for NPCs, items and weapons, which carry none - in Source
+		/// the model comes from the entity class - the one the game's own entity definitions give its class, which is where
+		/// that mapping actually lives.
+		/// </summary>
+		internal static bool TryGetModelOf(GameResources gameResources, VmfEntity entity, out string model, out bool fromClassDefinition)
+		{
+			fromClassDefinition = false;
+			if (entity.TryGetProperty("model", out model))
+				return true;
+			return fromClassDefinition = TryResolveClassModel(gameResources, entity.ClassName, out model);
+		}
+
+		/// <summary>
+		/// The model and skin of every entity of the world that Import imports as a model, in its order: what
+		/// GameResources.PrepareModels takes, so that their materials are written together before the entities are imported.
+		/// </summary>
+		public static List<(string model, int skin)> ModelRequests(GameResources gameResources, VmfWorld world)
+		{
+			var requests = new List<(string model, int skin)>();
+			if (world == null)
+				return requests;
+			foreach (var entity in world.Entities)
+			{
+				if (!HasAnImportOfItsOwn(entity.ClassName) && TryGetModelOf(gameResources, entity, out var model, out _))
+					requests.Add((model, entity.GetInteger("skin")));
+			}
+			return requests;
+		}
+
 		private static bool TryResolveClassModel(GameResources gameResources, string className, out string modelPath)
 		{
 			modelPath = gameResources.EntityClasses.GetModel(className);

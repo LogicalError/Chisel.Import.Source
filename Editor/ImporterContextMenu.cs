@@ -172,6 +172,12 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     go.SetActive(true);
                     ChiselNodeHierarchyManager.Rebuild();
 #endif
+                    // The materials of every model the entities are imported as, written together (as the world's above)
+                    gameResources.PrepareModels(ValveMapFormat2006.VmfEntityConverter.ModelRequests(gameResources, map), (i, count) =>
+                    {
+                        if (i % 32 == 0)
+                            EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Importing the models' materials...", (float)i / count);
+                    });
                     // begin converting hammer entities to unity objects.
                     ValveMapFormat2006.VmfEntityConverter.Import(gameResources, go.transform, map);
                     // func_instance is a compile-time VMF include, not a runtime entity. Import its
@@ -269,6 +275,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
         static void ReleaseImportCaches()
         {
             gameResources?.ReleaseImportedMaterials();
+            gameResources?.ReleaseImportedModels();
             ValveMapFormat2006.VmfWorldConverter.ReleaseImportCaches();
             ValveMapFormat2006.VmfEntityConverter.ReleaseImportCaches();
         }
@@ -377,6 +384,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     ValveMapFormat2006.VmfProbeVolumes.MarkModelInTheBakedLighting(includedModel.gameObject);
                     resources.PrepareMaterials(ValveMapFormat2006.VmfWorldConverter.MaterialRequests(resources, included));
                     ValveMapFormat2006.VmfWorldConverter.Import(resources, includedModel, included);
+                    resources.PrepareModels(ValveMapFormat2006.VmfEntityConverter.ModelRequests(resources, included));
                     ValveMapFormat2006.VmfEntityConverter.Import(resources, instanceObject.transform, included);
                     ImportInstances(resources, instanceObject.transform, mapPath, included, ancestry, depth + 1);
 
