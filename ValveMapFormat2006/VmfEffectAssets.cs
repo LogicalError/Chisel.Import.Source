@@ -141,7 +141,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <summary>
 		/// The asset at the path, built when it is missing, doesn't match or is older than <see cref="GeneratedVersion"/>.
 		/// An old one is rebuilt in place, so its GUID survives; <paramref name="reapply"/> then runs on it, for what a copy
-		/// doesn't carry.
+		/// doesn't carry. Either way it is written and stamped with one import (UnityAssets.CreateStamped, SaveStamped):
+		/// writing it and then stamping it took two, each a refresh of its own - 40 of a map's first import
+		/// for its 20 effect assets.
 		/// </summary>
 		static T GetOrBuild<T>(string assetPath, Func<T> build, Func<T, bool> matches, Action<T> reapply = null, string destinationPath = null)
 			where T : UnityEngine.Object
@@ -157,22 +159,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				EditorUtility.CopySerialized(built, existing);
 				existing.name = built.name;
 				reapply?.Invoke(existing);
-				EditorUtility.SetDirty(existing);
-				AssetDatabase.SaveAssetIfDirty(existing);
 				UnityEngine.Object.DestroyImmediate(built);
+				UnityAssets.SaveStamped(existing, GeneratedVersion);
 			}
 			else
 			{
 				PackagePath.EnsureDirectoriesExist(destinationPath ?? Path.GetFullPath(assetPath));
-				AssetDatabase.CreateAsset(built, assetPath);
+				UnityAssets.CreateStamped(built, assetPath, GeneratedVersion);
 				existing = built;
-			}
-
-			var importer = AssetImporter.GetAtPath(assetPath);
-			if (importer != null)
-			{
-				importer.userData = GeneratedAssetVersion.Stamp(importer.userData, GeneratedVersion);
-				importer.SaveAndReimport();
 			}
 			return existing;
 		}
