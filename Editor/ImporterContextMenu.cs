@@ -322,32 +322,32 @@ namespace AeternumGames.Chisel.Import.Source.Editor
         /// Expands Hammer func_instance entities. Each included VMF gets its own Chisel model so its local IDs cannot
         /// collide with the containing map's IDs, while the instance transform places all of its brushes and entities.
         /// </summary>
-        static void ImportInstances(GameResources resources, Transform parent, string containingMapPath,
+        /// <param name="mapPath">The map being imported. Every instance is looked for from there, the ones inside
+        /// instances too (<see cref="FindInstanceFile"/>).</param>
+        static void ImportInstances(GameResources resources, Transform parent, string mapPath,
                                     ValveMapFormat2006.VmfWorld world, HashSet<string> ancestry, int depth)
         {
             if (world == null || depth >= kMaxInstanceDepth)
             {
                 if (depth >= kMaxInstanceDepth)
-                    Debug.LogWarning($"Source map instance nesting exceeded {kMaxInstanceDepth} levels in {containingMapPath}");
+                    Debug.LogWarning($"Source map instance nesting exceeded {kMaxInstanceDepth} levels in {mapPath}");
                 return;
             }
 
-            var directory = Path.GetDirectoryName(containingMapPath) ?? string.Empty;
             foreach (var instance in world.Entities.Where(entity =>
                          string.Equals(entity.ClassName, "func_instance", StringComparison.OrdinalIgnoreCase)))
             {
-                var relativePath = instance.GetText("file");
-                if (string.IsNullOrWhiteSpace(relativePath))
+                var file = instance.GetText("file");
+                if (string.IsNullOrWhiteSpace(file))
                 {
                     Debug.LogWarning($"func_instance {instance.Id} has no file");
                     continue;
                 }
 
-                var instancePath = Path.GetFullPath(Path.Combine(directory,
-                    relativePath.Replace('/', Path.DirectorySeparatorChar)));
-                if (!File.Exists(instancePath))
+                var instancePath = FindInstanceFile(mapPath, file);
+                if (instancePath == null)
                 {
-                    Debug.LogWarning($"func_instance {instance.Id} could not find {instancePath}");
+                    Debug.LogWarning($"func_instance {instance.Id} could not find '{file}' from {mapPath}");
                     continue;
                 }
                 if (!ancestry.Add(instancePath))
@@ -378,7 +378,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     resources.PrepareMaterials(ValveMapFormat2006.VmfWorldConverter.MaterialRequests(resources, included));
                     ValveMapFormat2006.VmfWorldConverter.Import(resources, includedModel, included);
                     ValveMapFormat2006.VmfEntityConverter.Import(resources, instanceObject.transform, included);
-                    ImportInstances(resources, instanceObject.transform, instancePath, included, ancestry, depth + 1);
+                    ImportInstances(resources, instanceObject.transform, mapPath, included, ancestry, depth + 1);
 
                     // The containing map stays inactive during import, but explicitly activating the child makes
                     // its intended state correct even when an instance is imported under an already-active parent.
@@ -394,6 +394,54 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     ancestry.Remove(instancePath);
                 }
             }
+        }
+
+        /// <summary>
+        /// The file a func_instance's "file" key names, found where vbsp finds it (CMapFile::DeterminePath, Source SDK 2013
+        /// utils/vbsp/map.cpp): the name takes the extension .vmf in place of whatever extension it has, and is looked for
+        /// after the folder of the map being compiled - joined as text, so a name that starts with a slash only doubles a
+        /// separator - and then after that folder's path up to and including "\maps\". Null when it is in neither: vbsp
+        /// then says so and compiles the map without it.
+        /// </summary>
+        /// <remarks>
+        /// The ones inside instances are looked for from the map too, not from the instance that names them: vbsp merges an
+        /// instance's entities into the map's and goes on down the same list. Its third place, gameinfo's InstancePath, is a
+        /// folder in the game's own file system, which holds no map sources (Black Mesa's is bms/mapsrc/, which it does not
+        /// ship). Nine Black Mesa maps name instances without an extension, with another one ("b_lilypad.vmff") or from a
+        /// slash ("/instance/bluecrystal1"); taken as paths, none of them was found and 4,761 solids were lost.
+        /// </remarks>
+        static string FindInstanceFile(string mapPath, string file)
+        {
+            var separator = Path.DirectorySeparatorChar;
+            var name = WithVmfExtension(file).Replace('\\', '/').Replace('/', separator);
+            var folder = Path.GetDirectoryName(Path.GetFullPath(mapPath));
+
+            var besideTheMap = folder + separator + name;
+            if (File.Exists(besideTheMap))
+                return Path.GetFullPath(besideTheMap);
+
+            var maps = separator + "maps" + separator;
+            var folderPath = folder + separator;
+            var at = folderPath.IndexOf(maps, StringComparison.OrdinalIgnoreCase);
+            if (at >= 0)
+            {
+                var underMaps = folderPath.Substring(0, at + maps.Length) + name;
+                if (File.Exists(underMaps))
+                    return Path.GetFullPath(underMaps);
+            }
+            return null;
+        }
+
+        // V_SetExtension: an extension after the name's last separator gives way to .vmf. A dot that starts the name is not
+        // one.
+        static string WithVmfExtension(string name)
+        {
+            var end = name.Length - 1;
+            while (end > 0 && name[end] != '.' && name[end] != '/' && name[end] != '\\')
+                end--;
+            if (end > 0 && name[end] == '.')
+                name = name.Substring(0, end);
+            return name + ".vmf";
         }
 
         /// <summary>
