@@ -67,6 +67,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
         public static GameObject ImportMap(string path, bool showErrorDialog = true)
 		{
             LastImportException = null;
+            var phases = new ImportPhases();
             // TODO: have some way to set this
     	    SourceGameTitle gameTitle = SourceGameTitle.BlackMesa;
 
@@ -90,10 +91,12 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     var previousImport = RemovePreviousImport(mapName);
                     if (previousImport != null)
                         Debug.Log("Source map import (previous import): " + previousImport);
+                    phases.End("previous import");
 
                     EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Parsing Valve Map Format File (*.vmf)...", 0.0f);
                     var importer = new ValveMapFormat2006.VmfImporter();
                     var map = importer.Import(path);
+                    phases.End("parse");
 
                     // Clip models only stop the movers they stop in the game, by layer
                     var layerChanges = ValveMapFormat2006.VmfCollisionLayers.Ensure();
@@ -108,6 +111,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     // create parent game object to store all of the imported content.
                     go = new GameObject("Source Map - " + Path.GetFileNameWithoutExtension(path));
                     go.SetActive(false);
+                    phases.End("setup");
 
                     Material skybox = null;
                     if (!string.IsNullOrEmpty(map.SkyName))
@@ -151,6 +155,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                         RenderSettings.ambientEquatorColor = new Color(0.0505f * fill, 0.0643f * fill, 0.0873f * fill).gamma;
                         RenderSettings.ambientGroundColor  = new Color(0.0378f * fill, 0.034f * fill, 0.0303f * fill).gamma;
                     }
+                    phases.End("sky");
 
 					// create chisel model and import all of the brushes.
 					EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Preparing Material Searcher...", 0.0f);
@@ -164,7 +169,9 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                         if (i % 32 == 0)
                             EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Importing the world's materials...", (float)i / count);
                     });
+                    phases.End("world materials");
                     ValveMapFormat2006.VmfWorldConverter.Import(gameResources, worldModel, map);
+                    phases.End("world brushes");
 
 #if COM_AETERNUMGAMES_CHISEL_DECALS // optional decals package: https://github.com/Henry00IS/Chisel.Decals
                     // rebuild the world as we need the collision mesh for decals.
@@ -178,20 +185,25 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                         if (i % 8 == 0)
                             EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Importing the models...", (float)i / count);
                     });
+                    phases.End("models");
                     // begin converting hammer entities to unity objects.
                     ValveMapFormat2006.VmfEntityConverter.Import(gameResources, go.transform, map);
+                    phases.End("entities");
                     // func_instance is a compile-time VMF include, not a runtime entity. Import its
                     // world brushes and entities under a transformed child; otherwise maps such as
                     // a map lose their entire water setup (instances/a_water.vmf).
                     ImportInstances(gameResources, go.transform, path, map,
                         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Path.GetFullPath(path) }, 0);
+                    phases.End("instances");
                     // A reflection probe at every env_cubemap; they are baked once the level they reflect is built (below)
                     reflectionProbes = ValveMapFormat2006.VmfReflectionProbes.Import(go.transform, map, mapName);
                     // Expensive water's planar reflection ($reflecttexture), drawn for every camera; it finds the water itself
                     go.AddComponent<ValveMapFormat2006.SourceWaterReflection>();
+                    phases.End("reflection probes");
 #if COM_UNITY_RENDER_PIPELINES_UNIVERSAL
                     // and give the map the exposure, bloom and color correction it has in game.
                     ValveMapFormat2006.VmfPostProcessingConverter.Import(gameResources, go.transform, map, Path.GetFileNameWithoutExtension(path));
+                    phases.End("post processing");
 #endif
                 }
             }
@@ -237,6 +249,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                         LastImportException ??= ex;
                         Debug.LogException(ex);
                     }
+                    phases.End("activate and CSG");
 
                     // What a bake needs: a probe volume, a baking set and lighting settings. The bake itself is
                     // Generate Lighting, which is the user's to press - it takes minutes and wants the map finished.
@@ -252,6 +265,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                         Debug.LogError("Source map import: " + mapName + "'s probe volume could not be set up; the map continues without it.");
                         Debug.LogException(ex);
                     }
+                    phases.End("probe volumes");
 
                     // A bake that fails costs the map its reflections, not the import (VmfReflectionProbes.Bake)
                     if (reflectionProbes != null)
@@ -260,12 +274,36 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                         activateStopwatch.Restart();
                         ValveMapFormat2006.VmfReflectionProbes.Bake(reflectionProbes, mapName);
                         Debug.Log($"Source map import (reflection probes): {activateStopwatch.Elapsed.TotalSeconds:0.0}s");
+                        phases.End("reflection probe bake");
                     }
+                    Debug.Log(phases.Report(mapName));
                 }
                 ReleaseImportCaches();
                 EditorUtility.ClearProgressBar();
             }
             return go;
+        }
+
+        /// <summary>
+        /// How long each part of an import took, said once at its end. The parts that time themselves leave out the
+        /// material and model batches, the sky, the instances and the post processing: on a map's first
+        /// import those that did came to about 15 s of 71, and the rest could only be guessed at. A part an
+        /// exception cut short is not in it.
+        /// </summary>
+        sealed class ImportPhases
+        {
+            readonly System.Diagnostics.Stopwatch total = System.Diagnostics.Stopwatch.StartNew();
+            readonly System.Diagnostics.Stopwatch phase = System.Diagnostics.Stopwatch.StartNew();
+            readonly List<string> parts = new();
+
+            public void End(string name)
+            {
+                parts.Add($"{name} {phase.Elapsed.TotalSeconds:0.0}s");
+                phase.Restart();
+            }
+
+            public string Report(string mapName) =>
+                $"Source map import (phases): {mapName} {total.Elapsed.TotalSeconds:0.0}s - " + string.Join(", ", parts);
         }
 
         // What an import cached of the game's materials and textures is that import's own. Kept in statics it stayed
