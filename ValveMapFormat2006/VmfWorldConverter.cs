@@ -381,27 +381,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					// the outline the CSG derived; null when the planes make no brush (the CSG says why)
 					var outline = go.definition.Validate() ? go.definition.BrushOutline : null;
 
-					// build displacements, in world space while the brush still sits at the origin.
-					foreach (DisplacementSide displacement in DisplacementSurfaces)
-					{
-						if (outline?.polygons == null)
-							break;
-						for (int polyidx = 0; polyidx < outline.polygons.Length; polyidx++)
-						{
-							var polygon = outline.polygons[polyidx];
-							if (polygon.descriptionIndex != displacement.descriptionIndex)
-								continue;
-
-							Plane plane = new(planes[displacement.descriptionIndex].xyz, planes[displacement.descriptionIndex].w);
-							List<Vector3> vertices = new();
-							for (int e = polygon.firstEdge; e < polygon.firstEdge + polygon.edgeCount; e++)
-								vertices.Add(outline.vertices[outline.halfEdges[e].vertexIndex] + pivot);
-
-							BuildDisplacementSurface(go, displacement.side, displacement.surface, vertices, plane);
-							go.surfaceArray.surfaces[displacement.descriptionIndex] = ChiselSurface.Create(ChiselDefaultMaterials.Defaults.forceShadowOnlySurfacesMaterial);
-							break;
-						}
-					}
+					BuildDisplacements(go, outline, planes, pivot, DisplacementSurfaces);
 
 					go.transform.position += (Vector3)pivot;
 					brushIndex.Add(solid, go, outline, sideDrawn);
@@ -465,6 +445,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						var planes = new float4[solid.Sides.Count];
 						var planeSurfaces = new ChiselSurface[solid.Sides.Count];
 						var sideDrawn = new bool[solid.Sides.Count];
+						// prepare for any displacements.
+						DisplacementSurfaces.Clear();
 						// clip all the sides out of the brush.
 						for (int j = solid.Sides.Count; j-- > 0;)
 						{
@@ -488,10 +470,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 								sideDrawn[j] = isSurface;
 							} else
 							{
-								// Displacements only exist on world brushes, so every face here gets the material as vbsp
-								// patches it for a plain brush face.
-								material = FaceMaterial(gameResources, role, side, brushFace: true);
-								sideDrawn[j] = FaceKind(gameResources, role, side) == VmfFaceKind.Drawn;
+								// A displacement replaces its face as it does on a world brush (see the world solids above),
+								// and any other face gets the material as vbsp patches it for a plain brush face. vbsp compiles
+								// no displacement on an entity's brush - a func_detail's included, whose brushes it moves into
+								// the world keeping their entity (DispGetFaceInfo: "displacement found on a(n) func_detail
+								// entity - not supported") - so a map has one only while Hammer hides it, as a map does.
+								// It is imported as Hammer shows it.
+								material = FaceMaterial(gameResources, role, side, brushFace: side.Displacement == null);
+								sideDrawn[j] = side.Displacement == null && FaceKind(gameResources, role, side) == VmfFaceKind.Drawn;
 							}
 
 							// fallback to default material.
@@ -515,6 +501,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 							*/
 							planes[j] = new float4(clip.normal, clip.distance);
 							planeSurfaces[j] = surface;
+
+							// keep track of the surface used to cut the mesh (see the world solids above)
+							if (!isWater && side.Displacement != null)
+								DisplacementSurfaces.Add(new DisplacementSide { side = side, surface = surface, descriptionIndex = j });
 						}
 
 						ChiselBrushComponent go = CreateBrush(gameResources, brushModels, model, entity, solid, role, roleName);
@@ -523,7 +513,17 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						// the `hidden` block either), so it is imported but left inactive. A shared
 						// func_detail model cannot carry this state for the whole entity, so keep it on
 						// each imported brush.
-						if (solid.IsHidden || entity.IsHidden) go.gameObject.SetActive(false);
+						var hidden = solid.IsHidden || entity.IsHidden;
+						if (hidden) go.gameObject.SetActive(false);
+
+						// A displacement's brush is kept out of the CSG, as on a world brush
+						if (DisplacementSurfaces.Count > 0)
+						{
+							go.enabled = false;
+							if (!hidden)
+								Debug.LogWarning($"Source map import: displacement found on a(n) {entity.ClassName} entity (entity {entity.Id}, solid {solid.Id}), " +
+												 "which vbsp does not compile; imported as Hammer shows it");
+						}
 
 						// The brush IS its sides' planes, local to its pivot (see the world solids above)
 						var pivot = PivotOf(solid);
@@ -534,15 +534,24 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                         VmfSolidSide side = solid.Sides[j];
 						var surface = planeSurfaces[j];
 
-                        // calculate the texture coordinates, against the plane the CSG draws the face with
+                        // calculate the texture coordinates, against the plane the CSG draws the face with; a displacement's
+                        // mesh is built below in world space, against the world plane (see the world solids above)
                         GetTextureSize(surface.RenderMaterial, out int w, out int h);
-                        CalculateTextureCoordinates(go, center, surface, new Plane(localPlanes[j].xyz, localPlanes[j].w), w, h, side.UAxis, side.VAxis, pivot);
+                        if (!isWater && side.Displacement != null)
+                            CalculateTextureCoordinates(go, unfixedOrigin, surface, new Plane(planes[j].xyz, planes[j].w), w, h, side.UAxis, side.VAxis, float3.zero);
+                        else
+                            CalculateTextureCoordinates(go, center, surface, new Plane(localPlanes[j].xyz, localPlanes[j].w), w, h, side.UAxis, side.VAxis, pivot);
                     }
 
                     // the outline the CSG derived; null when the planes make no brush (the CSG says why)
                     var outline = go.definition.Validate() ? go.definition.BrushOutline : null;
+                    BuildDisplacements(go, outline, planes, pivot, DisplacementSurfaces);
                     go.transform.position += (Vector3)pivot;
                     brushIndex.Add(solid, go, outline, sideDrawn);
+
+                    // the displacements were built in world space and moved along with the brush (see the world solids above)
+                    foreach (Transform child in go.transform)
+                        child.position -= go.transform.position;
 
                     // detail brushes that do not affect the CSG world.
                     //if (entity.ClassName == "func_detail")
@@ -562,6 +571,32 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			Debug.Log($"Source map import (world brushes): {totalSeconds:0.0}s total" +
 					  ((world.Solids.Count > 0) ? $" ({solidsLoopSeconds * 1000.0 / world.Solids.Count:0.0} ms/solid)" : "") +
 					  $" - {world.Solids.Count} solids, {world.Entities.Count} entity brushes, {s_TextureSizes.Count} materials");
+		}
+
+		// Builds the brush's displacements, in world space while the brush still sits at the origin: each replaces its face,
+		// which is left casting shadows only
+		static void BuildDisplacements(ChiselBrushComponent go, BrushMesh outline, float4[] planes, float3 pivot, List<DisplacementSide> displacements)
+		{
+			foreach (DisplacementSide displacement in displacements)
+			{
+				if (outline?.polygons == null)
+					break;
+				for (int polyidx = 0; polyidx < outline.polygons.Length; polyidx++)
+				{
+					var polygon = outline.polygons[polyidx];
+					if (polygon.descriptionIndex != displacement.descriptionIndex)
+						continue;
+
+					Plane plane = new(planes[displacement.descriptionIndex].xyz, planes[displacement.descriptionIndex].w);
+					List<Vector3> vertices = new();
+					for (int e = polygon.firstEdge; e < polygon.firstEdge + polygon.edgeCount; e++)
+						vertices.Add(outline.vertices[outline.halfEdges[e].vertexIndex] + pivot);
+
+					BuildDisplacementSurface(go, displacement.side, displacement.surface, vertices, plane);
+					go.surfaceArray.surfaces[displacement.descriptionIndex] = ChiselSurface.Create(ChiselDefaultMaterials.Defaults.forceShadowOnlySurfacesMaterial);
+					break;
+				}
+			}
 		}
 
 		/// <summary>The upper horizontal face Source turns into a func_water_analog surface.</summary>
@@ -697,8 +732,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 		/// <summary>
 		/// The materials <see cref="Import"/> asks for, for this world's brushes, in the order it asks: each face drawn with its
-		/// own material (<see cref="ImportsItsMaterial"/>), a world face that is no displacement as vbsp patches it for a
-		/// brush face and a displacement's as it is, every brush entity's face as a brush face, and a func_water_analog's
+		/// own material (<see cref="ImportsItsMaterial"/>), a face that is no displacement as vbsp patches it for a brush face
+		/// and a displacement's as it is - on a world brush and on a brush entity's alike - and a func_water_analog's
 		/// WaterMaterial in place of its faces. Asked for first, they are written together (GameResources.PrepareMaterials)
 		/// rather than one refresh each; VmfWorldMaterialRequestsTests holds this to what Import asks for.
 		/// </summary>
@@ -731,7 +766,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					{
 						var side = solid.Sides[j];
 						if (ImportsItsMaterial(FaceKind(gameResources, role, side)))
-							requests.Add((side.Material, false, true));
+							requests.Add((side.Material, false, side.Displacement == null));
 					}
 				}
 			}
