@@ -78,6 +78,8 @@ namespace AeternumGames.Chisel.Import.Source.Editor
 				gameResources = new();
 				gameResources.InitializePaths(inputPaths);
 			}
+            // The game's files, found once per editor session: what the first import of a session spends before any map
+            phases.End("game files");
 
 	    	GameObject go = null;
             ValveMapFormat2006.SourceReflectionProbes reflectionProbes = null;
