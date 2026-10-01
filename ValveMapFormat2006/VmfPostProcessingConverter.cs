@@ -429,8 +429,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			colorLookup.texture.Override(lookup);
 			colorLookup.contribution.Override(lookup != null ? contribution : 0);
 
+			// The profile's file only, components and lookup with it. SaveAssets wrote every unsaved asset in the project
+			// along with it: a material URP had touched up since its import, anyone's work in progress.
 			EditorUtility.SetDirty(profile);
-			AssetDatabase.SaveAssets();
+			AssetDatabase.SaveAssetIfDirty(profile);
 
 			var volume = GetOrCreateVolume(parent, profile);
 			RenderPostProcessingOnCameras(volume.gameObject.scene, volume.gameObject.layer);
@@ -472,6 +474,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					{
 						existing.Shader = shader;
 						EditorUtility.SetDirty(existing);
+						AssetDatabase.SaveAssetIfDirty(existing);
 					}
 					continue;
 				}
@@ -493,11 +496,12 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				serialized.ApplyModifiedProperties();
 				rendererData.SetDirty();
 				EditorUtility.SetDirty(rendererData);
+				// This renderer's file only: SaveAssets wrote every unsaved asset in the project with it
+				AssetDatabase.SaveAssetIfDirty(rendererData);
 				added.Add(rendererData.name);
 			}
 			if (added.Count == 0)
 				return null;
-			AssetDatabase.SaveAssets();
 			return "added the Source Exposure renderer feature to " + string.Join(", ", added);
 		}
 
@@ -582,7 +586,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			}
 
 			EditorUtility.SetDirty(profile);
-			AssetDatabase.SaveAssets();
+			AssetDatabase.SaveAssetIfDirty(profile);
 			var volume = GetOrCreateVolume(parent, profile);
 			RenderPostProcessingOnCameras(volume.gameObject.scene, volume.gameObject.layer);
 			Debug.Log($"{mapName} legacy post processing migrated to URP: auto exposure {autoExposureMin}-{autoExposureMax}, bloom {bloomScale}. " +

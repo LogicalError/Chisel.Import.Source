@@ -142,6 +142,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 					{
 						existing.Shader = shader;
 						EditorUtility.SetDirty(existing);
+						AssetDatabase.SaveAssetIfDirty(existing);
 					}
 					continue;
 				}
@@ -163,11 +164,12 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				serialized.ApplyModifiedProperties();
 				rendererData.SetDirty();
 				EditorUtility.SetDirty(rendererData);
+				// This renderer's file only: SaveAssets wrote every unsaved asset in the project with it
+				AssetDatabase.SaveAssetIfDirty(rendererData);
 				added.Add(rendererData.name);
 			}
 			if (added.Count == 0)
 				return null;
-			AssetDatabase.SaveAssets();
 			return "added the Source Fog renderer feature to " + string.Join(", ", added);
 		}
 	}
