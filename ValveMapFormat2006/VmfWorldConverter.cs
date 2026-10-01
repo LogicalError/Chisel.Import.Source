@@ -675,15 +675,67 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		// The material a face gets, from what the face produces in Source (VmfBrushContents.FaceKindOf)
 		static Material FaceMaterial(GameResources gameResources, VmfBrushRole role, VmfSolidSide side, bool brushFace)
 		{
-			switch (FaceKind(gameResources, role, side))
+			var kind = FaceKind(gameResources, role, side);
+			// find the material in the unity project automatically.
+			if (ImportsItsMaterial(kind))
+				return gameResources.ImportVMT(side.Material, brushFace: brushFace);
+			switch (kind)
 			{
 				case VmfFaceKind.Sky:        return SkyFaceMaterial(RenderSettings.skybox);
 				case VmfFaceKind.Collision:  return ChiselDefaultMaterials.Defaults.collisionSurfacesMaterial;
 				case VmfFaceKind.ShadowOnly: return ChiselDefaultMaterials.Defaults.forceShadowOnlySurfacesMaterial;
-				case VmfFaceKind.Hidden:     return ChiselDefaultMaterials.Defaults.userHiddenSurfacesMaterial;
-				// find the material in the unity project automatically.
-				default:                     return gameResources.ImportVMT(side.Material, brushFace: brushFace);
+				default:                     return ChiselDefaultMaterials.Defaults.userHiddenSurfacesMaterial;
 			}
+		}
+
+		// Whether a face of this kind is drawn with its own material, which is imported for it; the others get one of the
+		// project's own (FaceMaterial), and MaterialRequests leaves them out
+		static bool ImportsItsMaterial(VmfFaceKind kind)
+		{
+			return kind != VmfFaceKind.Sky && kind != VmfFaceKind.Collision && kind != VmfFaceKind.ShadowOnly && kind != VmfFaceKind.Hidden;
+		}
+
+		/// <summary>
+		/// The materials <see cref="Import"/> asks for, for this world's brushes, in the order it asks: each face drawn with its
+		/// own material (<see cref="ImportsItsMaterial"/>), a world face that is no displacement as vbsp patches it for a
+		/// brush face and a displacement's as it is, every brush entity's face as a brush face, and a func_water_analog's
+		/// WaterMaterial in place of its faces. Asked for first, they are written together (GameResources.PrepareMaterials)
+		/// rather than one refresh each; VmfWorldMaterialRequestsTests holds this to what Import asks for.
+		/// </summary>
+		public static List<(string material, bool isSprite, bool brushFace)> MaterialRequests(GameResources gameResources, VmfWorld world)
+		{
+			var requests = new List<(string material, bool isSprite, bool brushFace)>();
+			foreach (var solid in world.Solids)
+			{
+				var (role, _) = VmfBrushContents.RoleOf(null, VmfBrushContents.SideMaterialsOf(solid), gameResources.GetMaterialContents);
+				for (int j = solid.Sides.Count; j-- > 0;)
+				{
+					var side = solid.Sides[j];
+					if (ImportsItsMaterial(FaceKind(gameResources, role, side)))
+						requests.Add((side.Material, false, side.Displacement == null));
+				}
+			}
+			foreach (var entity in world.Entities)
+			{
+				if (string.Equals(entity.ClassName, "func_water_analog", StringComparison.OrdinalIgnoreCase))
+				{
+					var waterMaterialName = entity.GetText("WaterMaterial");
+					if (!string.IsNullOrEmpty(waterMaterialName))
+						requests.Add((waterMaterialName, false, true));
+					continue;
+				}
+				foreach (var solid in entity.Solids)
+				{
+					var (role, _) = VmfBrushContents.RoleOf(entity.ClassName, VmfBrushContents.SideMaterialsOf(solid), gameResources.GetMaterialContents);
+					for (int j = solid.Sides.Count; j-- > 0;)
+					{
+						var side = solid.Sides[j];
+						if (ImportsItsMaterial(FaceKind(gameResources, role, side)))
+							requests.Add((side.Material, false, true));
+					}
+				}
+			}
+			return requests;
 		}
 
 		/// <summary>
