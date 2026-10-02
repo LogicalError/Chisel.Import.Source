@@ -84,6 +84,15 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             // How long each class of entity took, said with the entities' time
             var classTimes = new EntityClassTimes();
 
+            // The sprites' materials, written together first (SpriteMaterialRequests); the sprites then find them written
+            classTimes.Start();
+            gameResources.PrepareMaterials(SpriteMaterialRequests(world));
+            classTimes.End("(sprite materials)");
+
+            // The meshes and Material Variants the effects make are written together when the entities are done
+            // (VmfEffectAssets.Together), rather than one refresh each
+            using var effectAssets = VmfEffectAssets.Together();
+
             // A rope ends at the entity its NextKey names, which the per-entity loop below can't resolve, so ropes get a
             // pass of their own.
             classTimes.Start();
@@ -585,6 +594,10 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                 classTimes.End(entity.ClassName);
             }
 
+            classTimes.Start();
+            effectAssets.Dispose();
+            classTimes.End("(effect assets written)");
+
             // The loop touches no Chisel model or brush, so the decals are drawn as they would have been inside it
             VmfChiselDecals chiselDecals = null;
             if (decals != null)
@@ -981,6 +994,25 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 			{
 				if (!HasAnImportOfItsOwn(entity.ClassName) && TryGetModelOf(gameResources, entity, out var model, out _))
 					requests.Add((model, entity.GetInteger("skin")));
+			}
+			return requests;
+		}
+
+		/// <summary>
+		/// The material of every sprite of the world (env_sprite's "model"), as its import asks for it (GameResources.ImportSPR):
+		/// what GameResources.PrepareMaterials takes, so they are written together before the entities are imported - one
+		/// refresh between them, where each sprite asking for its own took one, and its texture another.
+		/// </summary>
+		public static List<(string entryName, bool isSprite, bool brushFace)> SpriteMaterialRequests(VmfWorld world)
+		{
+			var requests = new List<(string entryName, bool isSprite, bool brushFace)>();
+			if (world == null)
+				return requests;
+			foreach (var entity in world.Entities)
+			{
+				// Import's switch takes a class with an import of its own by its name, as written
+				if (entity.ClassName == "env_sprite" && entity.TryGetProperty("model", out string spriteName) && !string.IsNullOrEmpty(spriteName))
+					requests.Add((GameResources.SpriteMaterialName(spriteName), true, false));
 			}
 			return requests;
 		}

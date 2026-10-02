@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEngine;
@@ -73,7 +74,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				return variant;
 			}, existing => existing.parent == parent && CarriesSettings(existing, parent, configure),
 			// Copied over an older asset, a variant doesn't bring its overrides along, so they are set on the asset again
-			configure);
+			configure, together: true);
 		}
 
 		/// <summary>
@@ -128,7 +129,50 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		public static Mesh GetMesh(string name, Func<Mesh> build)
 		{
 			var fullName = $"effects/{name}.asset";
-			return GetOrBuild(PackagePath.GetAssetPath(fullName).Replace('\\', '/'), build, existing => true, destinationPath: PackagePath.GetOutputPath(fullName));
+			return GetOrBuild(PackagePath.GetAssetPath(fullName).Replace('\\', '/'), build, existing => true, destinationPath: PackagePath.GetOutputPath(fullName),
+							  together: true);
+		}
+
+		// The meshes and Material Variants made new while a batch is open (Together), by asset path, and in the order made
+		static Dictionary<string, UnityEngine.Object> s_Unwritten;
+		static List<(UnityEngine.Object asset, string assetPath)> s_UnwrittenInOrder;
+
+		/// <summary>
+		/// Opens a batch, which ends when it is disposed. Until then a mesh or a Material Variant that has to be written new
+		/// is made and handed back at once, as before, but written when the batch ends, with every other one, in ONE refresh
+		/// (UnityAssets.CreateStampedTogether), where each took one of its own: most of the 34 refreshes, 4 s, of
+		/// a map's entities - a mesh for each of its dust motes, a variant for each sprite's tint.
+		/// Until then it is no asset, and asking for it again hands back the same object. A base material is written at
+		/// once: a variant's parent has to be an asset. VmfEntityConverter.Import opens one around its entities.
+		/// </summary>
+		public static Batch Together()
+		{
+			if (s_Unwritten != null)
+				return new Batch(false);
+			s_Unwritten = new Dictionary<string, UnityEngine.Object>();
+			s_UnwrittenInOrder = new List<(UnityEngine.Object asset, string assetPath)>();
+			return new Batch(true);
+		}
+
+		/// <summary>See <see cref="Together"/>. It ends once: ending it again, or one opened inside another, does nothing.</summary>
+		public sealed class Batch : IDisposable
+		{
+			bool open;
+
+			internal Batch(bool open) => this.open = open;
+
+			public void Dispose()
+			{
+				if (!open)
+					return;
+				open = false;
+				var unwritten = s_UnwrittenInOrder;
+				s_Unwritten = null;
+				s_UnwrittenInOrder = null;
+				foreach (var (_, assetPath) in unwritten)
+					PackagePath.EnsureDirectoriesExist(Path.GetFullPath(assetPath));
+				UnityAssets.CreateStampedTogether(unwritten, GeneratedVersion);
+			}
 		}
 
 		static string SiblingPath(string assetPath, string name, string extension)
@@ -143,11 +187,16 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// An old one is rebuilt in place, so its GUID survives; <paramref name="reapply"/> then runs on it, for what a copy
 		/// doesn't carry. Either way it is written and stamped with one import (UnityAssets.CreateStamped, SaveStamped):
 		/// writing it and then stamping it took two, each a refresh of its own - 40 of a map's first import
-		/// for its 20 effect assets.
+		/// for its 20 effect assets. <paramref name="together"/>: a new one is written when the batch open ends,
+		/// if one is (<see cref="Together"/>).
 		/// </summary>
-		static T GetOrBuild<T>(string assetPath, Func<T> build, Func<T, bool> matches, Action<T> reapply = null, string destinationPath = null)
+		static T GetOrBuild<T>(string assetPath, Func<T> build, Func<T, bool> matches, Action<T> reapply = null, string destinationPath = null,
+							   bool together = false)
 			where T : UnityEngine.Object
 		{
+			if (s_Unwritten != null && s_Unwritten.TryGetValue(assetPath, out var unwritten))
+				return (T)unwritten;
+
 			var existing = AssetDatabase.LoadAssetAtPath<T>(assetPath);
 			if (existing != null && matches(existing) && GeneratedAssetVersion.IsCurrent(assetPath, GeneratedVersion))
 				return existing;
@@ -161,6 +210,12 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				reapply?.Invoke(existing);
 				UnityEngine.Object.DestroyImmediate(built);
 				UnityAssets.SaveStamped(existing, GeneratedVersion);
+			}
+			else if (together && s_Unwritten != null)
+			{
+				s_Unwritten.Add(assetPath, built);
+				s_UnwrittenInOrder.Add((built, assetPath));
+				existing = built;
 			}
 			else
 			{
