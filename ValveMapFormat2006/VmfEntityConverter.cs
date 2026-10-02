@@ -81,9 +81,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
             ResetSpriteCaches();
             VmfModelCollision.ResetCaches();
 
+            // How long each class of entity took, said with the entities' time
+            var classTimes = new EntityClassTimes();
+
             // A rope ends at the entity its NextKey names, which the per-entity loop below can't resolve, so ropes get a
             // pass of their own.
+            classTimes.Start();
             ImportRopes(gameResources, parent, world);
+            classTimes.End("(ropes)");
 
             // Built on the first decal that needs it, since only overlays name brush faces.
             VmfDecalConverter.SideIndex decalSides = null;
@@ -98,6 +103,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                 VmfWorldConverter.ReportProgress("Chisel: Importing Source Engine Map (3/3)", "Converting Hammer Entities To Unity Objects", e, world.Entities.Count);
 #endif
                 VmfEntity entity = world.Entities[e];
+                classTimes.Start();
 
                 // Every class with an import of its own is one HasAnImportOfItsOwn names, and every other class reaches the
                 // default: a model, as ModelRequests asks for it before the entities are imported
@@ -576,20 +582,65 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
                     }
 #endif
 				}
+                classTimes.End(entity.ClassName);
             }
 
             // The loop touches no Chisel model or brush, so the decals are drawn as they would have been inside it
             VmfChiselDecals chiselDecals = null;
             if (decals != null)
             {
+                classTimes.Start();
                 chiselDecals = new VmfChiselDecals(gameResources, VmfBrushIndex.Of(world));
                 chiselDecals.CreateAll(decals);
+                classTimes.End("(decals drawn)");
             }
 
             Debug.Log($"Source map import (entities):{entityStopwatch.Elapsed.TotalSeconds:0.0}s for {world.Entities.Count} entities" +
                       ((world.Entities.Count > 0) ? $" ({entityStopwatch.Elapsed.TotalMilliseconds / world.Entities.Count:0.0} ms/entity)" : ""));
+            Debug.Log("Source map import (entity classes): " + classTimes.Report(12));
             if (chiselDecals != null)
                 Debug.Log(chiselDecals.Report());
+        }
+
+        /// <summary>
+        /// How long each class of entity took to import, the slowest first: the entities were 5.7 s of a map's
+        /// first import, with nothing to say which.
+        /// </summary>
+        sealed class EntityClassTimes
+        {
+            readonly Dictionary<string, (double seconds, int count)> times = new();
+            readonly System.Diagnostics.Stopwatch watch = new();
+
+            public void Start() => watch.Restart();
+
+            public void End(string className)
+            {
+                className ??= "";
+                times.TryGetValue(className, out var time);
+                times[className] = (time.seconds + watch.Elapsed.TotalSeconds, time.count + 1);
+            }
+
+            public string Report(int count)
+            {
+                var sorted = new List<KeyValuePair<string, (double seconds, int count)>>(times);
+                sorted.Sort((a, b) => b.Value.seconds.CompareTo(a.Value.seconds));
+                var parts = new List<string>();
+                double rest = 0;
+                int restCount = 0;
+                for (int i = 0; i < sorted.Count; i++)
+                {
+                    if (i < count)
+                        parts.Add($"{sorted[i].Key} {sorted[i].Value.seconds:0.00}s ({sorted[i].Value.count})");
+                    else
+                    {
+                        rest += sorted[i].Value.seconds;
+                        restCount += sorted[i].Value.count;
+                    }
+                }
+                if (restCount > 0)
+                    parts.Add($"the other {sorted.Count - count} classes {rest:0.00}s ({restCount})");
+                return string.Join(", ", parts);
+            }
         }
 
         /// <summary>
