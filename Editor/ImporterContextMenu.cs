@@ -311,11 +311,13 @@ namespace AeternumGames.Chisel.Import.Source.Editor
         // What an import cached of the game's materials and textures is that import's own. Kept in statics it stayed
         // loaded until the domain reloaded, every import adding to it: gameResources held 72, then 272, then 370
         // materials over one session, and with them their textures (VmfImportCachesTests). The game's
-        // files stay found: gameResources itself is kept.
+        // files stay found: gameResources itself is kept, but the archives it read them from are closed, so the game's
+        // files are not held open between imports.
         static void ReleaseImportCaches()
         {
             gameResources?.ReleaseImportedMaterials();
             gameResources?.ReleaseImportedModels();
+            gameResources?.CloseArchives();
             ValveMapFormat2006.VmfWorldConverter.ReleaseImportCaches();
             ValveMapFormat2006.VmfEntityConverter.ReleaseImportCaches();
         }
