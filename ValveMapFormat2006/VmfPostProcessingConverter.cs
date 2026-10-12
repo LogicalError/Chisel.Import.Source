@@ -359,9 +359,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 		/// <summary>Where bloom starts, gamma encoded as URP's threshold is.</summary>
 		/// <remarks>
-		/// Black Mesa's own bloom starts on fairly dim pixels (r_bloom_nextgen_threshold 0.1 in its
-		/// skill.cfg), and a threshold of 1 left a map's lamps without the halos they have in game.
-		/// 0.5 was picked against a game screenshot of that station.
+		/// Source's bloom starts on fairly dim pixels, and a threshold of 1 left lamps without the halos they have
+		/// in game. 0.5 matches a game screenshot.
 		/// </remarks>
 		public const float BloomThreshold = 0.5f;
 

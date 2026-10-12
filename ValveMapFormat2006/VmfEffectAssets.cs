@@ -139,9 +139,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 		/// <summary>
 		/// Opens a batch, which ends when it is disposed. Until then a mesh or a Material Variant that has to be written new
-		/// is made and handed back at once, as before, but written when the batch ends, with every other one, in ONE refresh
-		/// (UnityAssets.CreateStampedTogether), where each took one of its own: most of the 34 refreshes, 4 s, of
-		/// a map's entities - a mesh for each of its dust motes, a variant for each sprite's tint.
+		/// is made and handed back at once, but written when the batch ends, with every other one, in ONE refresh
+		/// (UnityAssets.CreateStampedTogether), where each would take one of its own.
 		/// Until then it is no asset, and asking for it again hands back the same object. A base material is written at
 		/// once: a variant's parent has to be an asset. VmfEntityConverter.Import opens one around its entities.
 		/// </summary>
@@ -185,10 +184,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <summary>
 		/// The asset at the path, built when it is missing, doesn't match or is older than <see cref="GeneratedVersion"/>.
 		/// An old one is rebuilt in place, so its GUID survives; <paramref name="reapply"/> then runs on it, for what a copy
-		/// doesn't carry. Either way it is written and stamped with one import (UnityAssets.CreateStamped, SaveStamped):
-		/// writing it and then stamping it took two, each a refresh of its own - 40 of a map's first import
-		/// for its 20 effect assets. <paramref name="together"/>: a new one is written when the batch open ends,
-		/// if one is (<see cref="Together"/>).
+		/// doesn't carry. Either way it is written and stamped with one import (UnityAssets.CreateStamped, SaveStamped);
+		/// writing it and then stamping it would take two, each a refresh of its own. <paramref name="together"/>: a new one
+		/// is written when the batch open ends, if one is (<see cref="Together"/>).
 		/// </summary>
 		static T GetOrBuild<T>(string assetPath, Func<T> build, Func<T, bool> matches, Action<T> reapply = null, string destinationPath = null,
 							   bool together = false)

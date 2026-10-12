@@ -33,10 +33,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <summary>
 		/// The texels an env_cubemap asks for, as the game reads its "cubemapsize": vbsp stores the value in the BSP as a
 		/// byte (dcubemapsample_t.size is an unsigned char, map.cpp IntForKey), and the engine takes 0 as the default
-		/// (mat_envmaptgasize, "32.0") and n as 1 &lt;&lt; (n - 1) (gl_rmisc.cpp). So "256", which three of a map's
-		/// env_cubemaps carry - a size in texels typed where the exponent goes - is stored as 0 and gets the default. Read
-		/// as an exponent it asked for 2048, and every probe of the map baked at that: 11.5 GB of cubemaps, a packed array
-		/// past Unity's 2 GB, and an import that threw.
+		/// (mat_envmaptgasize, "32.0") and n as 1 &lt;&lt; (n - 1) (gl_rmisc.cpp). So "256" - a size in texels typed where
+		/// the exponent goes - is stored as 0 and gets the default. Read as an exponent it would ask for 2048, which
+		/// makes every probe of the map bake at that.
 		/// </summary>
 		public static int CubemapResolution(int cubemapSize)
 		{
@@ -208,9 +207,9 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 				probes.Add(probe);
 				positions.Add(probeObject.transform.position);
 			}
-			// Every env_cubemap hidden: the compiler leaves
+			// Every env_cubemap hidden (all of them in a visgroup that is not auto-shown): the compiler leaves
 			// them all out, so the map reflects as one without env_cubemaps. Their probes stay imported, switched off; a
-			// nearest-probe volume with nothing to point at handed every cell probe 0 of none and threw.
+			// nearest-probe volume with nothing to point at would throw.
 			if (probes.Count == 0)
 				return null;
 			if (probes.Count > SourceReflectionProbes.kMaxProbes)
@@ -307,8 +306,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// </summary>
 		/// <remarks>
 		/// Nothing it runs into may leave it: a bake that fails costs the map its reflections, not the import. It is called
-		/// once the map is built, and an exception out of here - a map's, from packing probes past Unity's 2 GB in the
-		/// bake's completion callback - went straight out of ImportMap, whose caller then undid the whole import.
+		/// once the map is built, and an exception out of here would go straight out of ImportMap, whose caller then undoes
+		/// the whole import.
 		/// </remarks>
 		public static void Bake(SourceReflectionProbes component, string mapName)
 		{

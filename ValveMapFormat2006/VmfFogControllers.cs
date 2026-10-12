@@ -41,8 +41,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <summary>
 		/// The controller the game would use. CFogSystem::LevelInitPostEntity takes the first env_fog_controller it
 		/// finds, then lets ANY later one carrying the Master spawnflag replace it - so with several masters the LAST
-		/// wins, and with none at all the first does. a map has three, two of them masters, and the last of those
-		/// (c2a5a_fog_control) is the one whose numbers match its sky_camera's.
+		/// wins, and with none at all the first does.
 		/// </summary>
 		public static VmfEntity Master(VmfWorld world)
 		{

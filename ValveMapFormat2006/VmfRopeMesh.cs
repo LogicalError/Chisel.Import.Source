@@ -6,17 +6,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 	/// The strip a rope is drawn as: two vertices per render point, with everything the Cable shader needs to widen it
 	/// into a camera-facing ribbon at draw time.
 	/// <para>
-	/// A <see cref="LineRenderer"/> was used for this strip, and could not be made to stop aliasing. Its width
-	/// is WORLD space and its quads are expanded on the CPU, so by the time a shader sees a rope there is no centre line
-	/// left to widen: a distant cable falls below a pixel, samples through, and shimmers. Source does not have this
-	/// problem because it decides a rope's width in SCREEN space, per point, per camera
-	/// (<c>c_rope.cpp</c>'s <c>ShouldUseFakeAA</c>): below a floor it holds the rope at that width and takes the
-	/// difference out of the alpha instead, which means that at a certain distance it starts
-	/// rendering the lines so that they're always at least a pixel thick, but then decreases the transparency of the
-	/// line instead.
+	/// A <see cref="LineRenderer"/> cannot be used for this: its width is WORLD space and its quads are expanded on the
+	/// CPU, so by the time a shader sees a rope there is no centre line left to widen: a distant cable falls below a
+	/// pixel, samples through, and shimmers. Source does not have this problem because it decides a rope's width in
+	/// SCREEN space, per point, per camera (<c>c_rope.cpp</c>'s <c>ShouldUseFakeAA</c>): below a floor it holds the
+	/// rope at that width and takes the difference out of the alpha instead.
 	/// </para>
 	/// <para>
-	/// Doing that needs the centre line to survive into the vertex shader, which is the whole reason for this mesh. It
+	/// Doing that needs the centre line to survive into the vertex shader, which is the reason for this mesh. It
 	/// also makes a rope right in several cameras at once - the sky view and the Scene view draw the same ropes in the
 	/// same frame, and a width computed on the CPU can only ever be correct for one of them.
 	/// </para>

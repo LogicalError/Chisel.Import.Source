@@ -8,15 +8,14 @@ namespace AeternumGames.Chisel.Import.Source
 {
 	/// <summary>
 	/// Source's fog, from the map's master env_fog_controller. Linear between two distances, and capped: it is the cap
-	/// that URP's own fog cannot do, and at a map's 0.5 the distance never disappears, so using Unity's fog instead
-	/// would make the map twice as hazy at range. Rendered by <see cref="SourceFogFeature"/>.
+	/// that URP's own fog cannot do. Rendered by <see cref="SourceFogFeature"/>.
 	/// </summary>
 	/// <remarks>
 	/// game/client/viewrender.cpp: CViewRender::EnableWorldFog sets MATERIAL_FOG_LINEAR with GetFogStart/GetFogEnd/
 	/// GetFogMaxDensity, so the fog is saturate((distance - start) / (end - start)) * maxdensity. GetFogColor blends
 	/// colorPrimary and colorSecondary by the view direction when <c>fogblend</c> is set - 0.5 * dot(forward,
 	/// dirPrimary) + 0.5, with dirPrimary from <c>fogdir</c>, or from the entity's angles when <c>use_angles</c> is set
-	/// (CFogController::Activate, negated) - and does it on the 0..255 values, in gamma space, with a FIXME saying so.
+	/// (CFogController::Activate, negated) - and does it on the 0..255 values, in gamma space.
 	/// <para>
 	/// Which controller: CFogSystem::LevelInitPostEntity walks the entity list, takes the first as master, then lets
 	/// ANY later one with SF_FOG_MASTER (spawnflags 1) replace it, so with several masters the last one wins.

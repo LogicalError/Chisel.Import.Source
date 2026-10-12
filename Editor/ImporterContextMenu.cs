@@ -118,8 +118,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     Material skybox = null;
                     if (!string.IsNullOrEmpty(map.SkyName))
 					{
-						// A sky that cannot be built costs the map its sky, not the whole import: this call used to
-						// throw straight out to the catch below, before a single brush had been imported
+						// A sky that cannot be built costs the map its sky, not the whole import
 						try
 						{
 							skybox = MaterialImporter.ImportSkybox(gameResources, map.SkyName);
@@ -140,15 +139,12 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                         RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
                     }
 
-                    // A map without a light_environment has no sky light at all in Source: its
-                    // interiors are lit by their own lights and VRAD's bounce. Skybox ambient has no
-                    // occlusion, so it floods every interior instead - in a map's tram station it
-                    // was about 60% of all the light in view. Until the map is baked, a dim fixed fill
-                    // stands in for the bounce light, picked against a game screenshot of that station.
-                    // This is a stand-in for VRAD's bounced light, not exposure compensation. Mixed
-                    // lights provide realtime direct light before a bake, but without this fill their
-                    // missing indirect contribution leaves the whole map nearly black. Unity reads
-                    // ambient colors as gamma, so the linear values are converted.
+                    // A map without a light_environment has no sky light at all in Source: its interiors are lit by their own lights
+                    // and VRAD's bounce. Skybox ambient has no occlusion, so it would flood every interior instead. Until the map is
+                    // baked, a dim fixed fill stands in for the bounce light. This is a stand-in for VRAD's bounced light, not exposure
+                    // compensation: mixed lights provide realtime direct light before a bake, but without this fill their missing
+                    // indirect contribution leaves the whole map nearly black. Unity reads ambient colors as gamma, so the linear
+                    // values are converted.
                     if (!map.Entities.Exists(entity => entity.ClassName == "light_environment"))
                     {
                         const float fill = 0.3f;
@@ -191,9 +187,8 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                     // begin converting hammer entities to unity objects.
                     ValveMapFormat2006.VmfEntityConverter.Import(gameResources, go.transform, map);
                     phases.End("entities");
-                    // func_instance is a compile-time VMF include, not a runtime entity. Import its
-                    // world brushes and entities under a transformed child; otherwise maps such as
-                    // a map lose their entire water setup (instances/a_water.vmf).
+                    // func_instance is a compile-time VMF include, not a runtime entity. Import its world brushes and entities under
+                    // a transformed child; otherwise the content of the instances is lost.
                     ImportInstances(gameResources, go.transform, path, map,
                         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Path.GetFullPath(path) }, 0);
                     phases.End("instances");
@@ -221,9 +216,8 @@ namespace AeternumGames.Chisel.Import.Source.Editor
             {
                 if (go != null)
                 {
-                    // Nothing in here may leave ImportMap. An exception out of a finally is out of the catch above too:
-                    // a map's, from packing its reflection probes inside the bake, went straight to the caller, which
-                    // undid the whole import. What fails here is logged and kept like any other.
+                    // Nothing in here may leave ImportMap. An exception out of a finally is out of the catch above too, and would undo
+                    // the whole import. What fails here is logged and kept like any other.
                     var activateStopwatch = System.Diagnostics.Stopwatch.StartNew();
                     try
                     {
@@ -231,8 +225,7 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                         // Chisel sees any of the brushes: activating registers all of them and the
                         // initial CSG rebuild runs in one lump. None of that is visible to the
                         // converters' own timings, which is why the import looks like it finishes and
-                        // then the editor sits there. Time it, and keep a progress bar up for it -
-                        // ClearProgressBar used to run first, so this stretch had no bar at all.
+                        // then the editor sits there. Time it, and keep a progress bar up for it.
                         EditorUtility.DisplayProgressBar("Chisel: Importing Source Engine Map", "Activating map...", 0.9f);
                         go.SetActive(true);
                         var activateSeconds = activateStopwatch.Elapsed.TotalSeconds;
@@ -288,9 +281,8 @@ namespace AeternumGames.Chisel.Import.Source.Editor
 
         /// <summary>
         /// How long each part of an import took, said once at its end. The parts that time themselves leave out the
-        /// material and model batches, the sky, the instances and the post processing: on a map's first
-        /// import those that did came to about 15 s of 71, and the rest could only be guessed at. A part an
-        /// exception cut short is not in it.
+        /// material and model batches, the sky, the instances and the post processing. A part an exception cut short is
+        /// not in it.
         /// </summary>
         sealed class ImportPhases
         {
@@ -308,11 +300,9 @@ namespace AeternumGames.Chisel.Import.Source.Editor
                 $"Source map import (phases): {mapName} {total.Elapsed.TotalSeconds:0.0}s - " + string.Join(", ", parts);
         }
 
-        // What an import cached of the game's materials and textures is that import's own. Kept in statics it stayed
-        // loaded until the domain reloaded, every import adding to it: gameResources held 72, then 272, then 370
-        // materials over one session, and with them their textures (VmfImportCachesTests). The game's
-        // files stay found: gameResources itself is kept, but the archives it read them from are closed, so the game's
-        // files are not held open between imports.
+        // What an import cached of the game's materials and textures is that import's own. Kept in statics it would stay
+        // loaded until the domain reloaded, every import adding to it. The game's files stay found: gameResources itself
+        // is kept, but the archives it read them from are closed, so the game's files are not held open between imports.
         static void ReleaseImportCaches()
         {
             gameResources?.ReleaseImportedMaterials();
@@ -326,14 +316,10 @@ namespace AeternumGames.Chisel.Import.Source.Editor
         /// Removes what an earlier import of the same map left behind, out of every loaded scene.
         /// </summary>
         /// <remarks>
-        /// This runs BEFORE the VMF is parsed and before a single object is created, because the point is to
-        /// never hold two copies at once. A map the size of a map is hundreds of megabytes of meshes,
-        /// colliders and CSG trees; importing it a second time next to the first one takes the editor to the
-        /// point where it stops responding rather than finishing. The assets have to go with the objects:
-        /// Chisel's generated meshes are DontSave, so nothing reclaims them until they are explicitly
-        /// unloaded, and destroying the hierarchy alone frees almost none of the memory.
-        /// Deliberately not Undo.DestroyObjectImmediate - an undo record keeps the entire copy alive, which
-        /// is exactly the memory this is here to release.
+        /// This runs before the VMF is parsed and before any object is created, so that two copies are never held at once.
+        /// The assets have to go with the objects: Chisel's generated meshes are DontSave, so nothing reclaims them until
+        /// they are explicitly unloaded, and destroying the hierarchy alone frees almost none of the memory.
+        /// Deliberately not Undo.DestroyObjectImmediate: an undo record keeps the entire copy alive.
         /// </remarks>
         /// <returns>What was removed, or null when no loaded scene held an earlier import of this map.</returns>
         static string RemovePreviousImport(string mapName)

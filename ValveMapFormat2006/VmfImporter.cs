@@ -62,8 +62,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
                 // Hammer wraps anything hidden in the editor in a `hidden { ... }` block. That is a
                 // wrapper, not a nesting level: treating it as one shifts every closures[] test
-                // below down by one, nothing matches, and the contents are silently dropped - which
-                // is what used to happen to 38 entities in background02.vmf alone.
+                // below down by one, nothing matches, and the contents are silently dropped.
                 // So braces are tracked separately from closure levels: a `hidden` brace is counted
                 // (so the matching `}` balances) but pushes no closure, leaving its contents to
                 // parse exactly as if they had been written in place.

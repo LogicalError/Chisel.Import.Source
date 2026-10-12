@@ -7,7 +7,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 {
 	/// <summary>
 	/// Where a Chisel decal goes to draw a Source decal as Source places it: plain math on the map's own values in
-	/// Source units and axes (see com.chisel Documentation~/Design/Decals.md).
+	/// Source units and axes.
 	/// <list type="bullet">
 	/// <item>info_overlay: a quad in its own basis, projected along <c>BasisNormal</c> (vbsp <c>overlay.cpp</c>). The
 	/// engine keeps <c>BasisU</c> and makes V as N x U, turned to agree with the map's <c>BasisV</c>. Corner i is at

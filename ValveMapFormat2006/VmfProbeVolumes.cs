@@ -83,19 +83,14 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// missing.
 		/// </summary>
 		/// <remarks>
-		/// This used to return the moment the scene already had a LightingSettings asset, on the reasoning that an
-		/// existing one is the user's choice. It is not safe to assume that: Unity assigns a default asset of its own
-		/// the first time anything touches lighting, and the defaults are wrong for this import in two ways that are
-		/// invisible until much later.
+		/// An existing LightingSettings asset is not assumed to be the user's choice: Unity assigns a default asset of its
+		/// own the first time anything touches lighting, and the defaults are wrong for this import in two ways.
 		/// <para>
 		/// bakedGI off means every Mixed light is forced to realtime and nothing bakes at all. And Shadowmask, rather
 		/// than Baked Indirect, is decided per light by FOUR occlusion channels: Unity hands them out and bakes every
-		/// light it cannot fit as FULLY baked, which contributes nothing in realtime. Measured on a map, which kept
-		/// Unity's default asset: of 500 lights, 121 held a channel (36/33/27/25 across channels 0-3) and the other
-		/// 379 were demoted to fully baked - dark, because the lightmap they were supposed to be in is empty. Two
-		/// identical lights a few metres apart ended up on opposite sides of that, and nothing in the Inspector says
-		/// so: it is Light.bakingOutput, which is not a serialized field, which is why duplicating such a light
-		/// produces one that works.
+		/// light it cannot fit as FULLY baked, which contributes nothing in realtime. Two identical lights a few metres
+		/// apart can end up on opposite sides of that, and nothing in the Inspector says so: it is Light.bakingOutput,
+		/// which is not a serialized field.
 		/// </para>
 		/// <para>
 		/// So an existing asset is adopted rather than obeyed: the two settings the rest of the import depends on are
@@ -228,11 +223,6 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// probe out of geometry by searching only 0.2x the brick size, so it fails wherever the wall is thicker than
 		/// that.
 		/// <para>
-		/// Measured on a map with nothing else changed: the two viewpoints under the level went 19% and 20%
-		/// brighter, one of them from 21.0% to 8.1% near-black, while six viewpoints in open parts of the map did not
-		/// move at all (identical to five decimals). It corrects the places that were wrong and leaves the rest alone.
-		/// </para>
-		/// <para>
 		/// Through <see cref="SerializedObject"/> because <c>ProbeVolumeBakingSet.settings</c> is internal to the
 		/// render pipeline's assembly - there is no public API for this.
 		/// </para>
@@ -268,19 +258,11 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		}
 
 		/// <summary>
-		/// How far virtual offset searches, as a fraction of the brick size. Measured on a map: 0.2 (Unity's) is
-		/// too short to leave a wall, 0.5 recovers everything recoverable, and 1.0 recovers nothing further - every
-		/// viewpoint identical to 0.5, so the benefit has plateaued well before it. 0.5 is taken rather than 1.0
-		/// because they buy the same thing here and the smaller displacement is the less likely to push a probe
-		/// THROUGH a thin wall into the next room on some other level, which would leak light rather than fix it.
+		/// How far virtual offset searches, as a fraction of the brick size. Unity's 0.2 is too short to leave a wall;
+		/// 0.5 recovers everything recoverable on the levels tried, and 1.0 recovers nothing further. 0.5 is taken rather
+		/// than 1.0 because the smaller displacement is the less likely to push a probe THROUGH a thin wall into the
+		/// next room, which would leak light rather than fix it.
 		/// </summary>
-		/// <remarks>
-		/// The measurement that says these are different questions: with 0.2 the worst-lit viewpoint in the map read
-		/// 0.01288 mean indirect; at 0.5 it read 0.03448, brighter than the map's average, and at 1.0, 0.03410. A
-		/// point sealed inside geometry on all six sides stayed at exactly 0.00000 throughout, which is what says the
-		/// probes left the walls rather than being pushed through them - both would otherwise read as "the enclosed
-		/// areas got brighter".
-		/// </remarks>
 		const float kSearchMultiplier = 0.5f;
 
 		static void EnsureFolderOf(string assetPath)

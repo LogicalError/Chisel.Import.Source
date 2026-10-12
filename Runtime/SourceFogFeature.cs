@@ -106,10 +106,7 @@ namespace AeternumGames.Chisel.Import.Source
 
 			// Never fog a reflection probe's bake, nor a preview. A probe's cubemap is radiance, sampled later from
 			// every distance and direction; fog is a function of distance from ONE viewpoint, so fogging the bake
-			// paints a single distance's haze into the texture and no later setting can take it out again. The
-			// importer bakes every env_cubemap in the same run that adds this feature, so without this an import
-			// quietly contaminates all of them - found from a cactus lit by a probe
-			// that had been baked with the fog on.
+			// paints a single distance's haze into the texture and no later setting can take it out again.
 			if (camera.cameraType == CameraType.Reflection || camera.cameraType == CameraType.Preview)
 				return;
 

@@ -200,8 +200,8 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// A side's plane in the brush's own space, as the CSG is handed it (ChiselBrushDefinition.SetPlanes): the side's
 		/// three points in Unity units relative to the pivot, the plane computed from them in double, rounded to float
 		/// ONCE. It is the plane <see cref="VmfPointsToUnityPlane"/> makes in world space, oriented the same way (the cross
-		/// product is taken after the swizzle), never a world plane rounded and then shifted. Generators give planes
-		/// : whatever the planes make of the brush is the CSG's to derive, exactly.
+		/// product is taken after the swizzle), never a world plane rounded and then shifted. Whatever the planes make of
+		/// the brush is the CSG's to derive, exactly.
 		/// </summary>
 		public static float4 LocalPlaneOf(VmfPlane input, float3 pivot)
 		{
@@ -474,7 +474,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 								// and any other face gets the material as vbsp patches it for a plain brush face. vbsp compiles
 								// no displacement on an entity's brush - a func_detail's included, whose brushes it moves into
 								// the world keeping their entity (DispGetFaceInfo: "displacement found on a(n) func_detail
-								// entity - not supported") - so a map has one only while Hammer hides it, as a map does.
+								// entity - not supported") - so a map has one only while Hammer hides it.
 								// It is imported as Hammer shows it.
 								material = FaceMaterial(gameResources, role, side, brushFace: side.Displacement == null);
 								sideDrawn[j] = side.Displacement == null && FaceKind(gameResources, role, side) == VmfFaceKind.Drawn;

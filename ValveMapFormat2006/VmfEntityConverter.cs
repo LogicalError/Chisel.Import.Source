@@ -45,21 +45,13 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         /// bake, which is where Source's came from too.
         /// </summary>
         /// <remarks>
-        /// These used to import as LightShadows.Hard each, which no map of this size can afford. A Source
-        /// level has hundreds of lights precisely BECAUSE VRAD baked them - the engine cast realtime shadows
-        /// from only a handful. a map has 500: 310 spot lights at one shadow slice each and 190 point
-        /// lights at SIX, for 1450 slices. URP's additional-light atlas is already at 8192, its maximum, and
-        /// cannot hold them, so it downscales and drops shadow maps and says so - three warnings per frame,
-        /// every frame, each one retained by the console with a full stack trace. That is what took the
-        /// editor to 95 GB; the renderer was fine, the log was not.
+        /// A Source level has hundreds of lights precisely BECAUSE VRAD baked them - the engine cast realtime shadows
+        /// from only a handful. Importing each as a realtime shadow caster is more than a map of this size can afford:
+        /// URP's additional-light atlas has a fixed maximum size and cannot hold that many shadow maps, so it downscales
+        /// and drops them and logs warnings every frame, each one retained by the console with a full stack trace.
         /// <para>
-        /// It stayed hidden while 379 of those 500 lights were demoted to fully baked and cast nothing (see
-        /// VmfProbeVolumes.EnsureLightingSettings for why they were), and appeared the moment they were all
-        /// made live again.
-        /// </para>
-        /// <para>
-        /// The sun keeps its shadows: light_environment is one directional light, it is what actually reads
-        /// as sunlight, and a directional light costs cascades rather than atlas slices.
+        /// The sun keeps its shadows: light_environment is one directional light, it is what actually
+        /// reads as sunlight, and a directional light costs cascades rather than atlas slices.
         /// </para>
         /// </remarks>
         private const LightShadows kImportedLightShadows = LightShadows.None;
@@ -152,7 +144,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 						// use_angles does NOT turn the sky view, and nothing here should make it: sky3dparams_t gives the client
 						// only scale, origin, area and fog (playernet_vars.h:89), and CSkyCamera reads use_angles for exactly what
 						// CFogController::Activate reads it for - the fog's primary direction, AngleVectors(GetAbsAngles()) negated
-						// (SkyCamera.cpp:49, fogcontroller.cpp:119). a map's angles "0 180 0" mean its fog comes from -x.
+						// (SkyCamera.cpp:49, fogcontroller.cpp:119).
 						//
 						// The 3D skybox is fogged with sky_camera's OWN fog, not the level's, and its distances are divided by
 						// the scale because the miniature is that many times smaller (CSkyboxView::Enable3dSkyboxFog). Read
@@ -186,8 +178,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 
 					// https://developer.valvesoftware.com/wiki/Env_sprite
 					// env_sprite is the camera-facing glow quad the maps hang on light fixtures,
-					// warning lamps, screens and anything else meant to bloom - 14353 of them
-					// across the campaign, 259 in a map alone.
+					// warning lamps, screens and anything else meant to bloom.
 					case "env_sprite":
 					{
 						// The "model" key on a sprite is a material, not a model. It is written
@@ -616,8 +607,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
         }
 
         /// <summary>
-        /// How long each class of entity took to import, the slowest first: the entities were 5.7 s of a map's
-        /// first import, with nothing to say which.
+        /// How long each class of entity took to import, the slowest first.
         /// </summary>
         sealed class EntityClassTimes
         {
@@ -1192,7 +1182,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <remarks>
 		/// A map points thousands of sprites at a handful of glow materials and then tints each one
 		/// with its own rendercolor/renderamt. Those two are all that varies, so a variant per
-		/// distinct tint is enough: a map's 259 sprites need 26 materials between them.
+		/// distinct tint is enough.
 		/// </remarks>
 		private static readonly Dictionary<(Material material, Color32 tint), Material> tintedSpriteMaterials = new();
 

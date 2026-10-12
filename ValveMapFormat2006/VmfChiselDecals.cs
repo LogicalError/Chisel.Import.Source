@@ -96,8 +96,7 @@ namespace AeternumGames.Chisel.Import.Source.ValveMapFormat2006
 		/// <summary>
 		/// Makes the Chisel decals for all of a map's imported decals, as <see cref="Create"/> makes them one by one, but with
 		/// their materials written together first (<see cref="GameResources.PrepareMaterials"/>): one refresh between them,
-		/// where each decal asking for its own took one - 58 of a map's first import, its 29 decal materials and
-		/// their textures. Returns how many it made.
+		/// where each decal asking for its own would take one. Returns how many it made.
 		/// </summary>
 		public int CreateAll(IReadOnlyList<VmfDecal> decals)
 		{
